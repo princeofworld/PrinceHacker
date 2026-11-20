@@ -3,6 +3,7 @@ package com.princeofworld.familyguard
 import android.Manifest
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.location.Location
 import android.location.LocationManager
 import android.net.Uri
@@ -48,13 +49,73 @@ import kotlinx.coroutines.launch
 private val Context.familyGuardStore by preferencesDataStore(name = "family_guard_local")
 private val premiumDemoKey = booleanPreferencesKey("premium_demo_unlocked")
 
+private data class PermissionStatus(
+    val label: String,
+    val permission: String,
+    val granted: Boolean
+)
+
 class MainActivity : ComponentActivity() {
     private var locationText by mutableStateOf("Location has not been requested.")
     private var contactText by mutableStateOf("No contact selected.")
     private var photoText by mutableStateOf("No photo selected.")
     private var notice by mutableStateOf<String?>(null)
+    private var permissionStatuses by mutableStateOf<List<PermissionStatus>>(emptyList())
 
-    private val contactPicker = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+    private fun requiredRuntimePermissions(): Array<String> {
+        val permissions = mutableListOf(
+            Manifest.permission.ACCESS_FINE_LOCATION,
+            Manifest.permission.ACCESS_COARSE_LOCATION
+        )
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            permissions += Manifest.permission.POST_NOTIFICATIONS
+        }
+        return permissions.toTypedArray()
+    }
+
+    private fun refreshPermissionStatuses() {
+        val rows = mutableListOf(
+            PermissionStatus(
+                "Precise location",
+                Manifest.permission.ACCESS_FINE_LOCATION,
+                checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
+            ),
+            PermissionStatus(
+                "Approximate location",
+                Manifest.permission.ACCESS_COARSE_LOCATION,
+                checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
+            )
+        )
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            rows += PermissionStatus(
+                "Notifications",
+                Manifest.permission.POST_NOTIFICATIONS,
+                checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
+            )
+        }
+        permissionStatuses = rows
+    }
+
+    private val permissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { grants ->
+        refreshPermissionStatuses()
+        if (grants[Manifest.permission.ACCESS_FINE_LOCATION] == true ||
+            grants[Manifest.permission.ACCESS_COARSE_LOCATION] == true
+        ) {
+            readCurrentLocation()
+        } else {
+            locationText = "Location permission is still pending. You can allow it later in Android Settings."
+        }
+        val denied = grants.filterValues { !it }.keys
+        if (denied.isNotEmpty()) {
+            notice = "Some permissions were not granted. FamilyGuard will keep those features unavailable; you can change access in Android Settings."
+        }
+    }
+
+    private val contactPicker = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
         val uri: Uri? = result.data?.data
         if (result.resultCode == RESULT_OK && uri != null) {
             val name = contentResolver.query(
@@ -73,19 +134,16 @@ class MainActivity : ComponentActivity() {
     }
 
     private val photoPicker = registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
-        photoText = uri?.let { "Photo selected for this session: ${it.lastPathSegment ?: "image"}" } ?: "Photo selection cancelled."
-    }
-
-    private val locationPermission = registerForActivityResult(
-        ActivityResultContracts.RequestMultiplePermissions()
-    ) { grants ->
-        val allowed = grants[Manifest.permission.ACCESS_FINE_LOCATION] == true ||
-            grants[Manifest.permission.ACCESS_COARSE_LOCATION] == true
-        if (allowed) readCurrentLocation() else locationText = "Location permission was not granted."
+        photoText = if (uri != null) {
+            "A photo was selected through Android's system picker."
+        } else {
+            "Photo selection cancelled."
+        }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        refreshPermissionStatuses()
         setContent {
             MaterialTheme {
                 val premium by familyGuardStore.data
@@ -96,18 +154,14 @@ class MainActivity : ComponentActivity() {
                     locationText = locationText,
                     contactText = contactText,
                     photoText = photoText,
+                    permissionStatuses = permissionStatuses,
+                    onAllowAllPermissions = {
+                        permissionLauncher.launch(requiredRuntimePermissions())
+                    },
                     onChooseContact = {
                         contactPicker.launch(Intent(Intent.ACTION_PICK, ContactsContract.Contacts.CONTENT_URI))
                     },
                     onChoosePhoto = { photoPicker.launch("image/*") },
-                    onRequestLocation = {
-                        locationPermission.launch(
-                            arrayOf(
-                                Manifest.permission.ACCESS_FINE_LOCATION,
-                                Manifest.permission.ACCESS_COARSE_LOCATION
-                            )
-                        )
-                    },
                     onComposeSms = {
                         val intent = Intent(Intent.ACTION_SENDTO, Uri.parse("smsto:"))
                             .putExtra("sms_body", "I am sharing this message with your permission.")
@@ -143,22 +197,28 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    override fun onResume() {
+        super.onResume()
+        refreshPermissionStatuses()
+    }
+
     @Suppress("MissingPermission")
     private fun readCurrentLocation() {
         val manager = getSystemService(Context.LOCATION_SERVICE) as LocationManager
+        val hasFine = checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
+        val provider = if (hasFine) LocationManager.GPS_PROVIDER else LocationManager.NETWORK_PROVIDER
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                manager.getCurrentLocation(LocationManager.GPS_PROVIDER, null, mainExecutor) { location: Location? ->
+                manager.getCurrentLocation(provider, null, mainExecutor) { location: Location? ->
                     locationText = location?.let {
                         "Current device location: %.5f, %.5f".format(it.latitude, it.longitude)
-                    } ?: "No GPS fix is available. Try again outdoors with Location enabled."
+                    } ?: "No location fix is available right now. Try again later."
                 }
             } else {
-                val location = manager.getLastKnownLocation(LocationManager.GPS_PROVIDER)
-                    ?: manager.getLastKnownLocation(LocationManager.NETWORK_PROVIDER)
+                val location = manager.getLastKnownLocation(provider)
                 locationText = location?.let {
                     "Last known device location: %.5f, %.5f".format(it.latitude, it.longitude)
-                } ?: "No recent location is available. Try again with Location enabled."
+                } ?: "No recent location is available. Try again later."
             }
         } catch (_: SecurityException) {
             locationText = "Location permission is required."
@@ -173,8 +233,11 @@ private fun FamilyGuardApp(
     premiumDemo: Boolean,
     locationText: String,
     contactText: String,
+    photoText: String,
+    permissionStatuses: List<PermissionStatus>,
+    onAllowAllPermissions: () -> Unit,
     onChooseContact: () -> Unit,
-    onRequestLocation: () -> Unit,
+    onChoosePhoto: () -> Unit,
     onComposeSms: () -> Unit,
     onCamera: () -> Unit,
     onUnlockDemo: () -> Unit,
@@ -182,7 +245,8 @@ private fun FamilyGuardApp(
     onNotice: (String) -> Unit
 ) {
     var dialogTitle by androidx.compose.runtime.remember { mutableStateOf<String?>(null) }
-    var dialogMessage by androidx.compose.runtime.remember { mutableStateOf("") }\n    var showLocationConsent by androidx.compose.runtime.remember { mutableStateOf(false) }\n    var showPhotoConsent by androidx.compose.runtime.remember { mutableStateOf(false) }
+    var dialogMessage by androidx.compose.runtime.remember { mutableStateOf("") }
+    var showPhotoConsent by androidx.compose.runtime.remember { mutableStateOf(false) }
 
     fun showInfo(title: String, message: String) {
         dialogTitle = title
@@ -200,12 +264,39 @@ private fun FamilyGuardApp(
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Column(Modifier.padding(16.dp)) {
-                    Text(if (premiumDemo) "Active Plan: Premium (Demo)" else "Active Plan: Free Plan", style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        if (premiumDemo) "Active Plan: Premium (Demo)" else "Active Plan: Free Plan",
+                        style = MaterialTheme.typography.titleMedium
+                    )
                     Text(if (premiumDemo) "Local sandbox unlock • no payment taken" else "Free plan • local-only mode")
                 }
             }
 
-            Text("Step 3 • Family tools", style = MaterialTheme.typography.titleLarge)
+            Text("Step 3 • Permissions & Privacy", style = MaterialTheme.typography.titleLarge)
+            Text(
+                "Choose Allow All Permissions to review the required Android system prompts. You remain in control and can deny any permission.",
+                style = MaterialTheme.typography.bodyMedium
+            )
+            Button(onClick = onAllowAllPermissions, modifier = Modifier.fillMaxWidth()) {
+                Text("Allow All Permissions")
+            }
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Permission status", style = MaterialTheme.typography.titleMedium)
+                    permissionStatuses.forEach { status ->
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            Text(status.label, modifier = Modifier.weight(1f))
+                            Text(if (status.granted) "Granted ✅" else "Pending ⚠️")
+                        }
+                    }
+                    Text(
+                        "Photos: Android System Photo Picker is used instead of broad gallery permission.",
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
+            }
+
+            Text("Step 4 • Family tools", style = MaterialTheme.typography.titleLarge)
             FeatureCard(
                 title = "SMS",
                 description = "Open your SMS app and compose a message yourself. FamilyGuard does not read your inbox.",
@@ -221,11 +312,17 @@ private fun FamilyGuardApp(
             FeatureCard(
                 title = "Current Location",
                 description = locationText,
-                buttonText = "Request location permission",
-                onClick = { showLocationConsent = true }
+                buttonText = "Update location",
+                onClick = onAllowAllPermissions
+            )
+            FeatureCard(
+                title = "Photos",
+                description = "$photoText\nPhotos are chosen only through Android's system photo picker; FamilyGuard does not scan your gallery.",
+                buttonText = "Choose a photo",
+                onClick = { showPhotoConsent = true }
             )
 
-            FeatureCard(\n                title = "Photos",\n                description = photoText + "\\nPhotos are chosen only through Android’s system photo picker; FamilyGuard does not scan your gallery.",\n                buttonText = "Choose a photo",\n                onClick = { showPhotoConsent = true }\n            )\n\n            Text("Step 4 • Premium", style = MaterialTheme.typography.titleLarge)
+            Text("Step 5 • Premium", style = MaterialTheme.typography.titleLarge)
             Card(
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer),
                 modifier = Modifier.fillMaxWidth()
@@ -255,7 +352,7 @@ private fun FamilyGuardApp(
                 }
             }
 
-            Text("Step 5 • User-controlled media", style = MaterialTheme.typography.titleLarge)
+            Text("Step 6 • User-controlled media", style = MaterialTheme.typography.titleLarge)
             FeatureCard(
                 title = "Camera self-capture",
                 description = "Opens the Android camera app. You control capture and can cancel at any time.",
@@ -285,13 +382,35 @@ private fun FamilyGuardApp(
                 }
             )
 
-            Text("Step 6 • Local data & backend-ready design", style = MaterialTheme.typography.titleLarge)
+            Text("Step 7 • Local data & backend-ready design", style = MaterialTheme.typography.titleLarge)
             Text("Premium demo status is saved locally with Android DataStore. No Firebase project, API key, or google-services.json is required. Cloud sync and real payment verification are not connected.")
-            Text("Privacy: no SMS inbox permission, no address-book scanning, no hidden location tracking, and no background recording.", style = MaterialTheme.typography.bodySmall)
+            Text(
+                "Privacy: no SMS inbox permission, no address-book scanning, no hidden location tracking, and no background recording.",
+                style = MaterialTheme.typography.bodySmall
+            )
         }
     }
 
-    if (showLocationConsent) {\n        AlertDialog(\n            onDismissRequest = { showLocationConsent = false },\n            title = { Text("Share this device location?") },\n            text = { Text("FamilyGuard will request Android location permission and show the current device location on this screen. Nothing is uploaded or shared automatically. You can deny permission or revoke it in Android Settings.") },\n            confirmButton = { TextButton(onClick = { showLocationConsent = false; onRequestLocation() }) { Text("Continue") } },\n            dismissButton = { TextButton(onClick = { showLocationConsent = false }) { Text("Not now") } }\n        )\n    }\n    if (showPhotoConsent) {\n        AlertDialog(\n            onDismissRequest = { showPhotoConsent = false },\n            title = { Text("Choose a photo?") },\n            text = { Text("Android’s system photo picker will let you select individual images. FamilyGuard will not request broad gallery access or scan other photos.") },\n            confirmButton = { TextButton(onClick = { showPhotoConsent = false; onChoosePhoto() }) { Text("Choose photo") } },\n            dismissButton = { TextButton(onClick = { showPhotoConsent = false }) { Text("Cancel") } }\n        )\n    }\n\n    if (dialogTitle != null && dialogTitle != "Sandbox demo unlock") {
+    if (showPhotoConsent) {
+        AlertDialog(
+            onDismissRequest = { showPhotoConsent = false },
+            title = { Text("Choose a photo?") },
+            text = {
+                Text("Android's system photo picker will let you select individual images. FamilyGuard will not request broad gallery access or scan other photos.")
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    showPhotoConsent = false
+                    onChoosePhoto()
+                }) { Text("Choose photo") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showPhotoConsent = false }) { Text("Cancel") }
+            }
+        )
+    }
+
+    if (dialogTitle != null && dialogTitle != "Sandbox demo unlock") {
         AlertDialog(
             onDismissRequest = { dialogTitle = null },
             title = { Text(dialogTitle.orEmpty()) },
