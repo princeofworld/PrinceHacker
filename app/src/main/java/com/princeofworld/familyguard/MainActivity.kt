@@ -51,6 +51,7 @@ private val premiumDemoKey = booleanPreferencesKey("premium_demo_unlocked")
 class MainActivity : ComponentActivity() {
     private var locationText by mutableStateOf("Location has not been requested.")
     private var contactText by mutableStateOf("No contact selected.")
+    private var photoText by mutableStateOf("No photo selected.")
     private var notice by mutableStateOf<String?>(null)
 
     private val contactPicker = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
@@ -69,6 +70,10 @@ class MainActivity : ComponentActivity() {
         } else {
             contactText = "Contact selection cancelled."
         }
+    }
+
+    private val photoPicker = registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        photoText = uri?.let { "Photo selected for this session: ${it.lastPathSegment ?: "image"}" } ?: "Photo selection cancelled."
     }
 
     private val locationPermission = registerForActivityResult(
@@ -90,9 +95,11 @@ class MainActivity : ComponentActivity() {
                     premiumDemo = premium,
                     locationText = locationText,
                     contactText = contactText,
+                    photoText = photoText,
                     onChooseContact = {
                         contactPicker.launch(Intent(Intent.ACTION_PICK, ContactsContract.Contacts.CONTENT_URI))
                     },
+                    onChoosePhoto = { photoPicker.launch("image/*") },
                     onRequestLocation = {
                         locationPermission.launch(
                             arrayOf(
@@ -175,7 +182,7 @@ private fun FamilyGuardApp(
     onNotice: (String) -> Unit
 ) {
     var dialogTitle by androidx.compose.runtime.remember { mutableStateOf<String?>(null) }
-    var dialogMessage by androidx.compose.runtime.remember { mutableStateOf("") }
+    var dialogMessage by androidx.compose.runtime.remember { mutableStateOf("") }\n    var showLocationConsent by androidx.compose.runtime.remember { mutableStateOf(false) }\n    var showPhotoConsent by androidx.compose.runtime.remember { mutableStateOf(false) }
 
     fun showInfo(title: String, message: String) {
         dialogTitle = title
@@ -215,10 +222,10 @@ private fun FamilyGuardApp(
                 title = "Current Location",
                 description = locationText,
                 buttonText = "Request location permission",
-                onClick = onRequestLocation
+                onClick = { showLocationConsent = true }
             )
 
-            Text("Step 4 • Premium", style = MaterialTheme.typography.titleLarge)
+            FeatureCard(\n                title = "Photos",\n                description = photoText + "\\nPhotos are chosen only through Android’s system photo picker; FamilyGuard does not scan your gallery.",\n                buttonText = "Choose a photo",\n                onClick = { showPhotoConsent = true }\n            )\n\n            Text("Step 4 • Premium", style = MaterialTheme.typography.titleLarge)
             Card(
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer),
                 modifier = Modifier.fillMaxWidth()
@@ -284,7 +291,7 @@ private fun FamilyGuardApp(
         }
     }
 
-    if (dialogTitle != null && dialogTitle != "Sandbox demo unlock") {
+    if (showLocationConsent) {\n        AlertDialog(\n            onDismissRequest = { showLocationConsent = false },\n            title = { Text("Share this device location?") },\n            text = { Text("FamilyGuard will request Android location permission and show the current device location on this screen. Nothing is uploaded or shared automatically. You can deny permission or revoke it in Android Settings.") },\n            confirmButton = { TextButton(onClick = { showLocationConsent = false; onRequestLocation() }) { Text("Continue") } },\n            dismissButton = { TextButton(onClick = { showLocationConsent = false }) { Text("Not now") } }\n        )\n    }\n    if (showPhotoConsent) {\n        AlertDialog(\n            onDismissRequest = { showPhotoConsent = false },\n            title = { Text("Choose a photo?") },\n            text = { Text("Android’s system photo picker will let you select individual images. FamilyGuard will not request broad gallery access or scan other photos.") },\n            confirmButton = { TextButton(onClick = { showPhotoConsent = false; onChoosePhoto() }) { Text("Choose photo") } },\n            dismissButton = { TextButton(onClick = { showPhotoConsent = false }) { Text("Cancel") } }\n        )\n    }\n\n    if (dialogTitle != null && dialogTitle != "Sandbox demo unlock") {
         AlertDialog(
             onDismissRequest = { dialogTitle = null },
             title = { Text(dialogTitle.orEmpty()) },
