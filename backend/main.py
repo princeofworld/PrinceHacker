@@ -9,6 +9,7 @@ from __future__ import annotations
 import base64
 import json
 import os
+import hashlib
 import secrets
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -173,6 +174,12 @@ def verify_subscription(payload: VerifyRequest, uid: str = Depends(_uid)):
         data = response.json()
     except ValueError:
         raise HTTPException(status_code=502, detail="Invalid Google Play response")
+    # Bind each purchase token to one Firebase account without storing the token itself.
+    token_hash = hashlib.sha256(payload.purchaseToken.get_secret_value().encode("utf-8")).hexdigest()
+    token_ref = _db().collection("familyguard_purchase_owners").document(token_hash)
+    owner = token_ref.get()
+    if owner.exists and (owner.to_dict() or {}).get("uid") != uid:
+        raise HTTPException(status_code=409, detail="This purchase is already linked to another FamilyGuard account")
     matching = [x for x in data.get("lineItems", [])
                 if x.get("productId") == PRODUCT_ID
                 and (x.get("offerDetails") or {}).get("basePlanId") == BASE_PLAN_ID]
@@ -189,6 +196,7 @@ def verify_subscription(payload: VerifyRequest, uid: str = Depends(_uid)):
                 pass
     active = data.get("subscriptionState") == "SUBSCRIPTION_STATE_ACTIVE" and bool(expiries)
     expiry = max(expiries) if expiries else None
+    token_ref.set({"uid": uid, "updatedAt": firestore.SERVER_TIMESTAMP})
     _db().collection("familyguard_accounts").document(uid).set({
         "ownerUid": uid, "premiumActive": active, "premiumExpiry": expiry,
         "productId": PRODUCT_ID if active else None, "basePlanId": BASE_PLAN_ID if active else None,
@@ -319,6 +327,8 @@ def location_family(familyId: str, uid: str = Depends(_uid)):
             continue
         item = doc.to_dict() or {}
         captured = item.get("capturedAt")
+        if not isinstance(captured, datetime) or captured < datetime.now(timezone.utc) - timedelta(minutes=10):
+            continue
         locations.append({"uid": doc.id, "latitude": item.get("latitude"),
                           "longitude": item.get("longitude"), "accuracyMeters": item.get("accuracyMeters"),
                           "capturedAt": captured.isoformat() if isinstance(captured, datetime) else None})
