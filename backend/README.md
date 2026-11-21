@@ -1,51 +1,26 @@
-# FamilyGuard API
+# FamilyGuard API (SQLite + JWT)
 
-FastAPI backend for verified Play subscriptions and opt-in family location sharing.
+Self-contained FastAPI backend. No Firebase project, Firebase API key, or Firebase Admin SDK is required.
 
-## Render deployment
-
-Create a Render Web Service from this repository:
+## Render
 - Root directory: `backend`
-- Build command: `pip install -r requirements.txt`
-- Start command: `uvicorn main:app --host 0.0.0.0 --port $PORT`
-- Health check: `/health`
+- Build: `pip install -r requirements.txt`
+- Start: `uvicorn main:app --host 0.0.0.0 --port $PORT`
+- Health: `/health`
+- API base URL: `https://princehacker.onrender.com`
 
-Set these private Render environment variables:
+SQLite uses `FAMILYGUARD_DB_PATH` when configured; otherwise it uses `/var/data/familyguard.sqlite3` if that directory exists, or a local file beside `main.py`. Render free instances have ephemeral filesystems. Attach persistent storage and set `FAMILYGUARD_DB_PATH=/var/data/familyguard.sqlite3` for durable accounts, families and locations. Free-instance restarts/redeploys may erase SQLite data.
 
-| Variable | Purpose |
-|---|---|
-| `FIREBASE_SERVICE_ACCOUNT_JSON` | Raw Firebase Admin service-account JSON (secret) |
-| `GOOGLE_PLAY_SERVICE_ACCOUNT_JSON` | Raw Google Play Developer API service-account JSON (secret) |
-| `PACKAGE_NAME` | `com.princeofworld.familyguard` |
-| `PLAY_SUBSCRIPTION_PRODUCT_ID` | `familyguard_premium_999_monthly` |
-| `PLAY_SUBSCRIPTION_BASE_PLAN_ID` | `monthly-999` |
-| `INVITE_TTL_MINUTES` | Optional; defaults to `15` |
+## Endpoints
+- `POST /auth/register` and `/auth/login`: email/password, scrypt password hashes, signed 12-hour JWT.
+- `POST /family/create`: active verified Premium entitlement required.
+- `POST /family/join`: single-use six-digit invite code.
+- `POST /family/consent`: explicit opt-in/out; revocation deletes last location.
+- `POST /location/update`: only consented family members can upload.
+- `GET /location/family?familyId=...`: membership and viewer consent required; only fresh opted-in locations.
+- `POST /verify-subscription`: if Play Developer credentials are absent, securely hashes and records the token as pending verification. It never grants Premium based on an unverified token.
+- `DELETE /account-data`: deletes account and associated records; Google Play billing is separate.
 
-The Firebase project must have Email/Password Authentication enabled and Firestore provisioned. The Firebase Admin service account must belong to that project. The Play service account must have the minimum permission to view subscription data in the app's Play Console. Do not commit either JSON key or place them in the Android app.
+JWT uses HMAC-SHA256. Location sharing is visible, foreground-only, explicitly enabled and revocable. HTTPS is required. This is not end-to-end encryption. Configure persistent storage, backups, rate limiting and complete a security review before public launch.
 
-## GitHub Actions secrets
-
-Set:
-- `FAMILYGUARD_API_BASE_URL`: the Render HTTPS service root (for example `https://your-service.onrender.com`)
-- `FIREBASE_WEB_API_KEY`: Firebase project's Web API key (not a service-account secret)
-- For signed releases: `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD`
-
-The Android app uses Firebase Identity Toolkit REST sign-in/sign-up, so no `google-services.json` or Google Services Gradle plugin is required. If the Firebase API key or Render URL is unset, family features show a configuration message and remain unavailable. The app receives only the Web API key; Admin and Play service-account JSON stays on Render.
-
-## API
-
-All endpoints except `/health` require `Authorization: Bearer <Firebase ID token>`.
-
-- `POST /verify-subscription`: verifies `purchases.subscriptionsv2.get` for the configured package/product/base plan and stores the authenticated user's verified Premium expiry in Firestore.
-- `POST /family/create`: active verified Premium account creates a family and receives a one-use six-digit invite code (15-minute default expiry).
-- `POST /family/join`: another authenticated account redeems a valid code.
-- `POST /family/consent`: each member explicitly enables or revokes location sharing. Revocation deletes that member's last location immediately.
-- `POST /location/update`: accepts coordinates only from an authenticated member who opted in.
-- `GET /location/family?familyId=...`: returns only locations from members who have opted in. Viewing also requires the viewer to have opted in.
-- `DELETE /account-data`: deletes this account's family membership, location records and Premium entitlement record. Google Play billing is managed separately.
-
-Location transport must use HTTPS. Firestore provides encryption at rest; this is not end-to-end encryption. Location sharing starts only after a visible user action and displays an ongoing Android foreground-service notification. Members can stop sharing and revoke consent from the app. The app does not offer covert/background monitoring without visible disclosure.
-
-## Operational notes
-
-Free Render instances may sleep or throttle; the app must fail closed when the service is unavailable. Add production rate limiting, abuse monitoring, backups, retention policy and security review before public launch. Six-digit codes should be short-lived and are single-use. Do not log ID tokens, purchase tokens, coordinates or request bodies.
+No Firebase or API key secrets are needed. Google Play service-account credentials are only required to validate actual purchases; without them purchases stay pending and Premium family creation remains locked.
