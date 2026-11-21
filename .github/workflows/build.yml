@@ -84,7 +84,8 @@ jobs:
             AAB="app/build/outputs/bundle/release/app-release.aab"
             test -s "${APK}"
             test -s "${AAB}"
-            apksigner verify --verbose "${APK}"
+            APKSIGNER="$(find "${ANDROID_HOME}/build-tools" -name apksigner | sort -V | tail -n 1)"
+  "${APKSIGNER}" verify --verbose "${APK}"
             jarsigner -verify -verbose -certs "${AAB}" >/dev/null
             cp "${APK}" release-artifacts/FamilyGuard-release-signed.apk
             cp "${AAB}" release-artifacts/FamilyGuard-release-signed.aab
