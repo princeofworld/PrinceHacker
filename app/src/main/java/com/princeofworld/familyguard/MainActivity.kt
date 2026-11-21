@@ -57,6 +57,7 @@ import java.text.DateFormat
 import java.util.Date
 
 private const val PREMIUM_PRODUCT_ID = "familyguard_premium_999_monthly"
+private const val PREMIUM_BASE_PLAN_ID = "monthly-999"
 
 class MainActivity : ComponentActivity() {
     private var locationText by mutableStateOf("Location sharing is off. Choose Update location to request access.")
@@ -66,7 +67,6 @@ class MainActivity : ComponentActivity() {
     private var billingReady by mutableStateOf(false)
     private var billingMessage by mutableStateOf("Connecting to Google Play…")
     private var productDetails: ProductDetails? = null
-    private var safetyAlertsEnabled by mutableStateOf(false)
     private var notice by mutableStateOf<String?>(null)
     private var pendingDisclosure by mutableStateOf<String?>(null)
     private var permissionStatusText by mutableStateOf("Checking permissions…")
@@ -126,21 +126,19 @@ class MainActivity : ComponentActivity() {
                     billingMessage = billingMessage,
                     locationText = locationText,
                     usageText = usageText,
-                    safetyAlertsEnabled = safetyAlertsEnabled,
                     onLocation = {
                         locationPermissionLauncher.launch(arrayOf(
                             Manifest.permission.ACCESS_FINE_LOCATION,
                             Manifest.permission.ACCESS_COARSE_LOCATION
                         ))
                     },
-                    onSafetyToggle = { safetyAlertsEnabled = it },
                     onUpgrade = { launchPremiumPurchase() },
                     onRestore = { restorePurchases() },
                     onUsage = { openUsageAccessSettings() },
                     onSos = { sendSosAlert() },
                     onNotice = { notice = it },
                     permissionStatusText = permissionStatusText,
-                    onSetupPermissions = { pendingDisclosure = "location" },
+                    onSetupPermissions = { beginPermissionSetup() },
                     onPrivacy = { openWebPage("https://raw.githubusercontent.com/princeofworld/PrinceHacker/main/PRIVACY_POLICY.md") },
                     onTerms = { openWebPage("https://raw.githubusercontent.com/princeofworld/PrinceHacker/main/TERMS_OF_SERVICE.md") },
                     onDeleteData = { showDeleteDataDialog = true }
@@ -200,6 +198,7 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         if (consentAccepted) refreshUsageReport()
+        if (billingReady) restorePurchases()
         updatePermissionStatus()
     }
 
@@ -220,6 +219,16 @@ class MainActivity : ComponentActivity() {
     private fun hasNotificationPermission(): Boolean =
         Build.VERSION.SDK_INT < 33 ||
             checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
+
+    private fun beginPermissionSetup() {
+        pendingDisclosure = when {
+            !hasLocationPermission() -> "location"
+            !hasNotificationPermission() -> "notifications"
+            premium && !hasUsageAccess() -> "usage"
+            else -> null
+        }
+        if (pendingDisclosure == null) notice = "All permissions currently needed by your enabled features are already granted. Background location is not requested."
+    }
 
     private fun updatePermissionStatus() {
         val location = if (hasLocationPermission()) "Granted" else "Pending"
@@ -273,9 +282,10 @@ class MainActivity : ComponentActivity() {
             notice = "The subscription is not available yet. Confirm that $PREMIUM_PRODUCT_ID is active in Play Console."
             return
         }
-        val offerToken = details.subscriptionOfferDetails?.firstOrNull()?.offerToken
+        val offer = details.subscriptionOfferDetails?.firstOrNull { it.basePlanId == PREMIUM_BASE_PLAN_ID }
+        val offerToken = offer?.offerToken
         if (offerToken == null) {
-            notice = "No eligible monthly subscription offer was returned by Google Play."
+            notice = "The monthly-999 base plan is not available. Configure product $PREMIUM_PRODUCT_ID with base plan $PREMIUM_BASE_PLAN_ID in Play Console."
             return
         }
         val productParams = BillingFlowParams.ProductDetailsParams.newBuilder()
@@ -492,9 +502,7 @@ private fun FamilyGuardDashboard(
     billingMessage: String,
     locationText: String,
     usageText: String,
-    safetyAlertsEnabled: Boolean,
     onLocation: () -> Unit,
-    onSafetyToggle: (Boolean) -> Unit,
     onUpgrade: () -> Unit,
     onRestore: () -> Unit,
     onUsage: () -> Unit,
@@ -511,7 +519,7 @@ private fun FamilyGuardDashboard(
             modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
-            Text("FamilyGuard", style = MaterialTheme.typography.headlineLarge)
+            Text("FamilyGuard: SafeCircle", style = MaterialTheme.typography.headlineLarge)
             Text("Parent Dashboard", style = MaterialTheme.typography.titleMedium)
             Card(
                 modifier = Modifier.fillMaxWidth(),
@@ -534,11 +542,7 @@ private fun FamilyGuardDashboard(
             DashboardCard("Live Location", locationText) {
                 Button(onClick = onLocation, modifier = Modifier.fillMaxWidth()) { Text("Request / refresh location") }
             }
-            DashboardCard("SOS Safety Alert", "Send an SOS message by opening the device's SMS app. You review and send it yourself.") {
-                Row(horizontalArrangement = Arrangement.SpaceBetween, modifier = Modifier.fillMaxWidth()) {
-                    Text("Safety alert reminder")
-                    Switch(checked = safetyAlertsEnabled, onCheckedChange = onSafetyToggle)
-                }
+            DashboardCard("SOS Safety Alert", "Prepare a message in the device SMS app. Nothing is sent automatically; you review and send it yourself.") {
                 Button(onClick = onSos, modifier = Modifier.fillMaxWidth()) { Text("Prepare SOS message") }
             }
             DashboardCard("App Usage & Screen Time", if (premium) usageText else "Premium feature • ₹999/month") {
@@ -556,7 +560,7 @@ private fun FamilyGuardDashboard(
             DashboardCard("About & Settings", "Review the policies or clear local FamilyGuard settings. This version does not create a cloud account.") {
                 OutlinedButton(onClick = onPrivacy, modifier = Modifier.fillMaxWidth()) { Text("Privacy Policy") }
                 OutlinedButton(onClick = onTerms, modifier = Modifier.fillMaxWidth()) { Text("Terms of Service") }
-                OutlinedButton(onClick = onDeleteData, modifier = Modifier.fillMaxWidth()) { Text("Account / Data Deletion") }
+                OutlinedButton(onClick = onDeleteData, modifier = Modifier.fillMaxWidth()) { Text("Delete Local App Data") }
             }
             DashboardCard("Privacy & consent", "Location is read only after the user grants Android runtime permission. Usage reports require Premium and a separate manual Usage Access grant in Android Settings. Data is displayed on this device; this sample does not silently upload activity or location.") {
                 Text("Monitoring is visible and user-controlled. The device user can revoke permissions in Android Settings at any time.", style = MaterialTheme.typography.bodySmall)
