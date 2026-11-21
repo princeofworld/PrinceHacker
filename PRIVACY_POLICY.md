@@ -28,14 +28,14 @@ This confirmation is an on-device declaration only; it does not verify a person'
 - Location is used to provide the user-requested location display.
 - App-usage information is used to display the local usage report.
 - The parental disclosure acceptance flag is stored in the app's local preferences.
-- The app does not operate a FamilyGuard server endpoint for location or usage data in this version, and does not transmit those reports to the developer.
+- The verification backend receives the Google Play purchase token only when checking a subscription. It calls Google Play Developer API and does not persist the token or location/usage reports. The current Android app does not upload location or app-usage reports to the verification backend.
 - Google Play handles subscription checkout and payment processing. FamilyGuard receives purchase status and purchase-token information from the Google Play Billing Library to determine whether the in-app subscription is available. Payment-card and bank details are handled by Google Play, not by FamilyGuard.
 
 No advertising or analytics SDK is included in the current app module dependencies. Re-check this statement if dependencies or app behavior change.
 
 ## 4. Subscription and billing
 
-The app integrates Google Play Billing Library 8 for the subscription product ID `familyguard_premium_999_monthly`. The intended price shown in the app is ₹999 per month. Actual availability, price, tax, renewal, cancellation, eligibility, and billing terms are determined by the offer configured in Google Play Console and shown in Google Play's checkout UI. A source-code product ID or displayed price alone does not establish that a Play Console product is active.
+The app integrates Google Play Billing Library 8 for the subscription product ID `familyguard_premium_999_monthly` and sends the purchase token to the configured HTTPS verification backend. Premium remains locked if the backend URL is not configured or Google Play cannot confirm an active subscription. The intended price shown in the app is ₹999 per month. Actual availability, price, tax, renewal, cancellation, eligibility, and billing terms are determined by the offer configured in Google Play Console and shown in Google Play's checkout UI. A source-code product ID or displayed price alone does not establish that a Play Console product is active.
 
 ## 5. Data retention and deletion
 
@@ -43,7 +43,7 @@ Location and usage report values are displayed in memory and are not stored in a
 
 ## 6. Data security
 
-Android permission controls and Google Play Billing are used for the functions described above. No internet-based FamilyGuard account or server-side storage is implemented in this version. No app can guarantee absolute security; keep the device updated and protect access to it.
+Android permission controls and Google Play Billing are used for the functions described above. The optional backend includes a Firebase-authenticated account-data deletion route, but this Android app does not yet include Firebase sign-in or a connected FamilyGuard cloud account. Do not treat cloud account deletion as available until that integration is completed and deployed. No app can guarantee absolute security; keep the device updated and protect access to it.
 
 ## 7. Children's privacy
 
