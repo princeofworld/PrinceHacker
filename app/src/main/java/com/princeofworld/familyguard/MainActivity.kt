@@ -84,6 +84,7 @@ class MainActivity : ComponentActivity() {
     private var familyId by mutableStateOf("")
     private var inviteCode by mutableStateOf("")
     private var familyLocationsText by mutableStateOf("No family locations loaded.")
+    private var familyConsentEnabled by mutableStateOf(false)
 
     private val locationPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
@@ -120,6 +121,8 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         consentAccepted = getSharedPreferences("familyguard_privacy", Context.MODE_PRIVATE)
             .getBoolean("parental_disclosure_accepted_v1", false)
+        familyId = getSharedPreferences("familyguard_family", Context.MODE_PRIVATE).getString("familyId", "") ?: ""
+        familyConsentEnabled = getSharedPreferences("familyguard_family", Context.MODE_PRIVATE).getBoolean("locationConsent", false)
         connectBilling()
         setContent {
             MaterialTheme(colorScheme = darkColorScheme()) {
@@ -144,6 +147,7 @@ class MainActivity : ComponentActivity() {
                     familyId = familyId,
                     inviteCode = inviteCode,
                     familyLocationsText = familyLocationsText,
+                    familyConsentEnabled = familyConsentEnabled,
                     onFamilyAuth = { email, password, create -> authenticateFamily(email, password, create) },
                     onCreateFamily = { name -> createFamily(name) },
                     onJoinFamily = { code -> joinFamily(code) },
@@ -281,6 +285,8 @@ class MainActivity : ComponentActivity() {
             val id = familyId.ifBlank { getSharedPreferences("familyguard_family", MODE_PRIVATE).getString("familyId", "") ?: "" }
             require(id.isNotBlank()) { "Create or join a family first." }
             FamilyGuardApi.post(this, "/family/consent", JSONObject().put("familyId", id).put("shareLocation", enabled))
+            familyConsentEnabled = enabled
+            getSharedPreferences("familyguard_family", MODE_PRIVATE).edit().putBoolean("locationConsent", enabled).apply()
             if (!enabled) stopService(Intent(this, FamilyLocationService::class.java))
             if (enabled) "Location consent enabled. Press Start live sharing to begin." else "Location consent revoked."
         }
@@ -303,6 +309,8 @@ class MainActivity : ComponentActivity() {
         }
         runFamilyTask {
             FamilyGuardApi.post(this, "/family/consent", JSONObject().put("familyId", familyId).put("shareLocation", true))
+            familyConsentEnabled = true
+            getSharedPreferences("familyguard_family", MODE_PRIVATE).edit().putBoolean("locationConsent", true).apply()
             val intent = Intent(this, FamilyLocationService::class.java)
             if (Build.VERSION.SDK_INT >= 26) startForegroundService(intent) else startService(intent)
             "Live sharing is on. Android displays a persistent notification."
@@ -314,6 +322,8 @@ class MainActivity : ComponentActivity() {
         runFamilyTask {
             val id = familyId.ifBlank { getSharedPreferences("familyguard_family", MODE_PRIVATE).getString("familyId", "") ?: "" }
             if (id.isNotBlank()) FamilyGuardApi.post(this, "/family/consent", JSONObject().put("familyId", id).put("shareLocation", false))
+            familyConsentEnabled = false
+            getSharedPreferences("familyguard_family", MODE_PRIVATE).edit().putBoolean("locationConsent", false).apply()
             "Sharing stopped and consent revoked."
         }
     }
@@ -660,7 +670,7 @@ private fun ParentalConsentDisclosureScreen(
             Text("App usage", style = MaterialTheme.typography.titleMedium)
             Text("If you choose the Premium usage report, Android Settings will ask you to grant Usage Access (PACKAGE_USAGE_STATS). FamilyGuard reads app usage on this device to show a recent usage summary. You can revoke this access in Android Settings.")
             Text("Data, sharing and safety", style = MaterialTheme.typography.titleMedium)
-            Text("This version stores the consent choice locally and does not send location or app-usage reports to a FamilyGuard server. Google Play processes subscription payments. Do not use this app to secretly monitor another person. The device user should be told what is enabled and be able to revoke permissions.")
+            Text("Location sharing is optional. When the device user explicitly enables it, the app sends location to the FamilyGuard server over HTTPS and shows an ongoing Android notification. The user can stop sharing and revoke consent at any time. Never use this app for covert monitoring.")
             Text("Parental consent", style = MaterialTheme.typography.titleMedium)
             Text("A parent or legal guardian should accept only after explaining the features to the device user and obtaining any consent required by local law. This on-device confirmation is not identity or age verification.")
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -692,6 +702,7 @@ private fun FamilyGuardDashboard(
     familyId: String,
     inviteCode: String,
     familyLocationsText: String,
+    familyConsentEnabled: Boolean,
     onFamilyAuth: (String, String, Boolean) -> Unit,
     onCreateFamily: (String) -> Unit,
     onJoinFamily: (String) -> Unit,
@@ -739,7 +750,7 @@ private fun FamilyGuardDashboard(
             DashboardCard("Live Location", locationText) {
                 Button(onClick = onLocation, modifier = Modifier.fillMaxWidth()) { Text("Request / refresh location") }
             }
-            FamilySharingCard(familyStatus, familyId, inviteCode, familyLocationsText, premium,
+            FamilySharingCard(familyStatus, familyId, inviteCode, familyLocationsText, familyConsentEnabled, premium,
                 onFamilyAuth, onCreateFamily, onJoinFamily, onFamilyConsent,
                 onStartSharing, onStopSharing, onFetchFamilyLocations)
             DashboardCard("SOS Safety Alert", "Prepare a message in the device SMS app. Nothing is sent automatically; you review and send it yourself.") {
@@ -762,7 +773,7 @@ private fun FamilyGuardDashboard(
                 OutlinedButton(onClick = onTerms, modifier = Modifier.fillMaxWidth()) { Text("Terms of Service") }
                 OutlinedButton(onClick = onDeleteData, modifier = Modifier.fillMaxWidth()) { Text("Delete Local App Data") }
             }
-            DashboardCard("Privacy & consent", "Location is read only after the user grants Android runtime permission. Usage reports require Premium and a separate manual Usage Access grant in Android Settings. Data is displayed on this device; this sample does not silently upload activity or location.") {
+            DashboardCard("Privacy & consent", "Location is sent to the family server only after explicit opt-in, and only while the visible foreground sharing service is running. Revoking consent stops local sharing and removes the member's last saved location. Usage reports are processed on this device.") {
                 Text("Monitoring is visible and user-controlled. The device user can revoke permissions in Android Settings at any time.", style = MaterialTheme.typography.bodySmall)
             }
             Text("FamilyGuard does not record calls, capture screens in the background, read private messages, or hide monitoring.", style = MaterialTheme.typography.bodySmall)
@@ -784,7 +795,7 @@ private fun DashboardCard(title: String, description: String, content: @Composab
 
 @Composable
 private fun FamilySharingCard(
-    status: String, familyId: String, inviteCode: String, locations: String, premium: Boolean,
+    status: String, familyId: String, inviteCode: String, locations: String, consentInitiallyEnabled: Boolean, premium: Boolean,
     onAuth: (String, String, Boolean) -> Unit, onCreate: (String) -> Unit, onJoin: (String) -> Unit,
     onConsent: (Boolean) -> Unit, onStart: () -> Unit, onStop: () -> Unit, onFetch: () -> Unit
 ) {
@@ -792,7 +803,7 @@ private fun FamilySharingCard(
     var password by remember { mutableStateOf("") }
     var familyName by remember { mutableStateOf("My Family") }
     var code by remember { mutableStateOf("") }
-    var consent by remember { mutableStateOf(false) }
+    var consent by remember { mutableStateOf(consentInitiallyEnabled) }
     DashboardCard("Family Location Sharing", "Sign in, create or join a family, then explicitly opt in. Sharing is visible and revocable.") {
         OutlinedTextField(email, { email = it }, label = { Text("Firebase email") }, modifier = Modifier.fillMaxWidth())
         OutlinedTextField(password, { password = it }, label = { Text("Password") }, modifier = Modifier.fillMaxWidth())
