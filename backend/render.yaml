@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: familyguard-verification
+    name: familyguard-api
     runtime: python
     plan: free
     rootDir: backend
