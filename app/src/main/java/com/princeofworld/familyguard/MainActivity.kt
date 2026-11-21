@@ -33,21 +33,11 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
-import androidx.datastore.preferences.core.booleanPreferencesKey
-import androidx.datastore.preferences.core.edit
-import androidx.datastore.preferences.preferencesDataStore
-import androidx.lifecycle.lifecycleScope
-import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.launch
-
-private val Context.familyGuardStore by preferencesDataStore(name = "family_guard_local")
-private val premiumDemoKey = booleanPreferencesKey("premium_demo_unlocked")
 
 private data class PermissionStatus(
     val label: String,
@@ -146,11 +136,7 @@ class MainActivity : ComponentActivity() {
         refreshPermissionStatuses()
         setContent {
             MaterialTheme {
-                val premium by familyGuardStore.data
-                    .map { preferences -> preferences[premiumDemoKey] ?: false }
-                    .collectAsState(initial = false)
                 FamilyGuardApp(
-                    premiumDemo = premium,
                     locationText = locationText,
                     contactText = contactText,
                     photoText = photoText,
@@ -172,16 +158,6 @@ class MainActivity : ComponentActivity() {
                         val intent = Intent("android.media.action.IMAGE_CAPTURE")
                         if (intent.resolveActivity(packageManager) != null) startActivity(intent)
                         else notice = "No camera app is available."
-                    },
-                    onUnlockDemo = {
-                        lifecycleScope.launch {
-                            familyGuardStore.edit { it[premiumDemoKey] = true }
-                        }
-                    },
-                    onResetDemo = {
-                        lifecycleScope.launch {
-                            familyGuardStore.edit { it[premiumDemoKey] = false }
-                        }
                     },
                     onNotice = { notice = it }
                 )
@@ -230,7 +206,6 @@ class MainActivity : ComponentActivity() {
 
 @Composable
 private fun FamilyGuardApp(
-    premiumDemo: Boolean,
     locationText: String,
     contactText: String,
     photoText: String,
@@ -240,8 +215,6 @@ private fun FamilyGuardApp(
     onChoosePhoto: () -> Unit,
     onComposeSms: () -> Unit,
     onCamera: () -> Unit,
-    onUnlockDemo: () -> Unit,
-    onResetDemo: () -> Unit,
     onNotice: (String) -> Unit
 ) {
     var dialogTitle by androidx.compose.runtime.remember { mutableStateOf<String?>(null) }
@@ -264,11 +237,8 @@ private fun FamilyGuardApp(
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Column(Modifier.padding(16.dp)) {
-                    Text(
-                        if (premiumDemo) "Active Plan: Premium (Demo)" else "Active Plan: Free Plan",
-                        style = MaterialTheme.typography.titleMedium
-                    )
-                    Text(if (premiumDemo) "Local sandbox unlock • no payment taken" else "Free plan • local-only mode")
+                    Text("Active Plan: Free", style = MaterialTheme.typography.titleMedium)
+                    Text("₹0 • No subscription required")
                 }
             }
 
@@ -322,32 +292,40 @@ private fun FamilyGuardApp(
                 onClick = { showPhotoConsent = true }
             )
 
-            Text("Step 5 • Premium", style = MaterialTheme.typography.titleLarge)
+            Text("Step 5 • Choose your plan", style = MaterialTheme.typography.titleLarge)
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("FREE • ₹0", style = MaterialTheme.typography.titleLarge)
+                    Text("Available now")
+                    Text("• Basic Family Safety Dashboard")
+                    Text("• Trusted Contacts selection")
+                    Text("• User-initiated SMS composition")
+                    Text("• Permission-based location tools")
+                    Text("• Individual photo selection")
+                    Text("Your current plan. No payment or subscription is required.")
+                }
+            }
             Card(
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer),
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("Premium • ₹999 / month", style = MaterialTheme.typography.titleLarge)
-                    Text("Sandbox only: unlock is stored on this device. This is not a real payment, subscription, or receipt.")
-                    if (!premiumDemo) {
-                        Button(onClick = {
-                            showInfo(
-                                "Sandbox demo unlock",
-                                "This will enable the local Premium demo state without charging money. It is not a real ₹999 payment."
-                            )
-                        }, modifier = Modifier.fillMaxWidth()) { Text("Unlock Premium Demo") }
-                        if (dialogTitle == "Sandbox demo unlock") {
-                            TextButton(onClick = {
-                                onUnlockDemo()
-                                dialogTitle = null
-                            }) { Text("Confirm demo unlock") }
-                        }
-                    } else {
-                        Text("Premium demo is unlocked on this device.")
-                        OutlinedButton(onClick = onResetDemo, modifier = Modifier.fillMaxWidth()) {
-                            Text("Reset demo status")
-                        }
+                    Text("PREMIUM • ₹999 / month", style = MaterialTheme.typography.titleLarge)
+                    Text("Planned subscription features")
+                    Text("• All Free plan features")
+                    Text("• Premium Family Safety Dashboard")
+                    Text("• Additional family-management tools as released")
+                    Text("• Subscription status and expiry details")
+                    Text("• Restore eligible purchases")
+                    Text("Status: Not subscribed")
+                    Text("Premium access will remain locked until Google Play confirms a real purchase and the purchase is verified.")
+                    OutlinedButton(onClick = {
+                        showInfo(
+                            "Premium subscription coming soon",
+                            "The ₹999/month plan is displayed for pricing transparency. Google Play Billing and secure purchase verification are not connected yet, so no purchase can be made and Premium features remain locked."
+                        )
+                    }, modifier = Modifier.fillMaxWidth()) {
+                        Text("Premium subscription coming soon")
                     }
                 }
             }
@@ -382,8 +360,8 @@ private fun FamilyGuardApp(
                 }
             )
 
-            Text("Step 7 • Local data & backend-ready design", style = MaterialTheme.typography.titleLarge)
-            Text("Premium demo status is saved locally with Android DataStore. No Firebase project, API key, or google-services.json is required. Cloud sync and real payment verification are not connected.")
+            Text("Step 7 • Subscription security", style = MaterialTheme.typography.titleLarge)
+            Text("No local Premium unlock is available. Subscription status will only be granted after a verified Google Play purchase; billing and server-side verification are a later implementation step.")
             Text(
                 "Privacy: no SMS inbox permission, no address-book scanning, no hidden location tracking, and no background recording.",
                 style = MaterialTheme.typography.bodySmall
