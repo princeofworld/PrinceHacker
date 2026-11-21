@@ -225,7 +225,7 @@ class MainActivity : ComponentActivity() {
         val location = if (hasLocationPermission()) "Granted" else "Pending"
         val notifications = if (hasNotificationPermission()) "Granted" else "Pending"
         val usage = if (hasUsageAccess()) "Granted" else if (premium) "Pending" else "Premium only"
-        permissionStatusText = "Location: $location\\nNotifications: $notifications\\nUsage Access: $usage\\nBackground location: Not requested (no background tracking)\\nBattery exemption: Not requested (not needed)"
+        permissionStatusText = "Location: $location\nNotifications: $notifications\nUsage Access: $usage\nBackground location: Not requested (no background tracking)\nBattery exemption: Not requested (not needed)"
     }
 
     private fun connectBilling() {
