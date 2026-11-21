@@ -66,6 +66,7 @@ class MainActivity : ComponentActivity() {
     private var premium by mutableStateOf(false)
     private var billingReady by mutableStateOf(false)
     private var billingMessage by mutableStateOf("Connecting to Google Play…")
+    private var premiumPriceLabel by mutableStateOf("Monthly price shown by Google Play")
     private var productDetails: ProductDetails? = null
     private var notice by mutableStateOf<String?>(null)
     private var pendingDisclosure by mutableStateOf<String?>(null)
@@ -124,6 +125,7 @@ class MainActivity : ComponentActivity() {
                     premium = premium,
                     billingReady = billingReady,
                     billingMessage = billingMessage,
+                    premiumPriceLabel = premiumPriceLabel,
                     locationText = locationText,
                     usageText = usageText,
                     onLocation = {
@@ -264,9 +266,15 @@ class MainActivity : ComponentActivity() {
         billingClient.queryProductDetailsAsync(params) { result, details ->
             if (result.responseCode == BillingClient.BillingResponseCode.OK) {
                 productDetails = details.productDetailsList.firstOrNull()
-                billingMessage = if (productDetails == null) {
-                    "Subscription product not found. Configure the product in Play Console."
-                } else "₹999/month subscription is available through Google Play."
+                val monthlyOffer = productDetails?.subscriptionOfferDetails?.firstOrNull { it.basePlanId == PREMIUM_BASE_PLAN_ID }
+                val recurringPhase = monthlyOffer?.pricingPhases?.pricingPhaseList?.lastOrNull()
+                premiumPriceLabel = if (recurringPhase?.billingPeriod == "P1M") "${recurringPhase.formattedPrice} / month" else "Monthly price shown at Google Play checkout"
+                billingMessage = when {
+                    productDetails == null -> "Subscription product not found. Configure the product in Play Console."
+                    monthlyOffer == null -> "Product found, but base plan $PREMIUM_BASE_PLAN_ID is unavailable in Play Console."
+                    recurringPhase?.billingPeriod != "P1M" -> "Base plan $PREMIUM_BASE_PLAN_ID must use a one-month billing period."
+                    else -> "Google Play monthly offer available: ${recurringPhase.formattedPrice}."
+                }
             } else billingMessage = "Could not load subscription: ${result.debugMessage}"
         }
     }
@@ -284,8 +292,8 @@ class MainActivity : ComponentActivity() {
         }
         val offer = details.subscriptionOfferDetails?.firstOrNull { it.basePlanId == PREMIUM_BASE_PLAN_ID }
         val offerToken = offer?.offerToken
-        if (offerToken == null) {
-            notice = "The monthly-999 base plan is not available. Configure product $PREMIUM_PRODUCT_ID with base plan $PREMIUM_BASE_PLAN_ID in Play Console."
+        if (offerToken == null || offer?.pricingPhases?.pricingPhaseList?.lastOrNull()?.billingPeriod != "P1M") {
+            notice = "The monthly-999 base plan is not available or is not configured for a one-month billing period. Configure product $PREMIUM_PRODUCT_ID with base plan $PREMIUM_BASE_PLAN_ID in Play Console."
             return
         }
         val productParams = BillingFlowParams.ProductDetailsParams.newBuilder()
@@ -500,6 +508,7 @@ private fun FamilyGuardDashboard(
     premium: Boolean,
     billingReady: Boolean,
     billingMessage: String,
+    premiumPriceLabel: String,
     locationText: String,
     usageText: String,
     onLocation: () -> Unit,
@@ -527,10 +536,10 @@ private fun FamilyGuardDashboard(
             ) {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Text(if (premium) "ACTIVE PLAN: PREMIUM" else "ACTIVE PLAN: FREE", style = MaterialTheme.typography.titleLarge)
-                    Text(if (premium) "₹999 / month" else "₹0 • Basic safety features")
+                    Text(if (premium) "Premium active • $premiumPriceLabel" else "₹0 • Basic safety features")
                     Text(if (premium) "App usage reports unlocked on this device." else "Upgrade to unlock app usage and screen-time reports.")
                     if (!premium) Button(onClick = onUpgrade, modifier = Modifier.fillMaxWidth()) {
-                        Text("Upgrade • ₹999/month")
+                        Text("Upgrade • $premiumPriceLabel")
                     }
                     OutlinedButton(onClick = onRestore, modifier = Modifier.fillMaxWidth()) {
                         Text("Restore purchases")
