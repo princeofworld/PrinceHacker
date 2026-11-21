@@ -284,6 +284,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun setFamilyConsent(enabled: Boolean) {
+        if (!enabled) stopService(Intent(this, FamilyLocationService::class.java))
         runFamilyTask {
             val id = familyId.ifBlank { getSharedPreferences("familyguard_family", MODE_PRIVATE).getString("familyId", "") ?: "" }
             require(id.isNotBlank()) { "Create or join a family first." }
