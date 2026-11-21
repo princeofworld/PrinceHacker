@@ -1,0 +1,20 @@
+services:
+  - type: web
+    name: familyguard-verification
+    runtime: python
+    plan: free
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
+    envVars:
+      - key: PLAY_PACKAGE_NAME
+        value: com.princeofworld.familyguard
+      - key: PLAY_SUBSCRIPTION_PRODUCT_ID
+        value: familyguard_premium_999_monthly
+      - key: PLAY_SUBSCRIPTION_BASE_PLAN_ID
+        value: monthly-999
+      - key: GOOGLE_PLAY_SERVICE_ACCOUNT_JSON_BASE64
+        sync: false
+      - key: GOOGLE_APPLICATION_CREDENTIALS
+        sync: false
