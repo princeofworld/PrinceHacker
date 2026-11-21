@@ -33,29 +33,77 @@ jobs:
       - name: Install Android SDK packages
         run: sdkmanager "platforms;android-34" "build-tools;34.0.0" "platform-tools"
 
+      - name: Prepare optional release keystore
+        shell: bash
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          set +x
+          if [[ -z "${ANDROID_KEYSTORE_BASE64}" ]]; then
+            if [[ -n "${ANDROID_KEYSTORE_PASSWORD}" || -n "${ANDROID_KEY_ALIAS}" || -n "${ANDROID_KEY_PASSWORD}" ]]; then
+              echo "::error::Signing secrets are incomplete: set ANDROID_KEYSTORE_BASE64 and all three matching signing secrets, or leave all four unset."
+              exit 1
+            fi
+            echo "Signing secrets are not configured; producing clearly labelled unsigned release artifacts."
+            exit 0
+          fi
+          if [[ -z "${ANDROID_KEYSTORE_PASSWORD}" || -z "${ANDROID_KEY_ALIAS}" || -z "${ANDROID_KEY_PASSWORD}" ]]; then
+            echo "::error::ANDROID_KEYSTORE_BASE64 is set but one or more required signing secrets are missing."
+            exit 1
+          fi
+          KEYSTORE_PATH="${RUNNER_TEMP}/familyguard-release.jks"
+          printf '%s' "${ANDROID_KEYSTORE_BASE64}" | base64 --decode > "${KEYSTORE_PATH}"
+          test -s "${KEYSTORE_PATH}"
+          chmod 600 "${KEYSTORE_PATH}"
+          echo "ANDROID_KEYSTORE_PATH=${KEYSTORE_PATH}" >> "${GITHUB_ENV}"
+          echo "Release keystore decoded into runner temp storage (not an artifact)."
+
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: "8.13"
 
       - name: Build release APK and Play Store bundle
+        env:
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: gradle --no-daemon --stacktrace :app:assembleRelease :app:bundleRelease
 
-      - name: Verify release outputs
+      - name: Verify and stage release outputs
         shell: bash
         run: |
           set -euo pipefail
-          test -s app/build/outputs/apk/release/app-release-unsigned.apk
-          test -s app/build/outputs/bundle/release/app-release.aab
           mkdir -p release-artifacts
-          cp app/build/outputs/apk/release/app-release-unsigned.apk release-artifacts/FamilyGuard-release-unsigned.apk
-          cp app/build/outputs/bundle/release/app-release.aab release-artifacts/FamilyGuard-release-unsigned.aab
+          if [[ -n "${ANDROID_KEYSTORE_PATH:-}" ]]; then
+            APK="app/build/outputs/apk/release/app-release.apk"
+            AAB="app/build/outputs/bundle/release/app-release.aab"
+            test -s "${APK}"
+            test -s "${AAB}"
+            apksigner verify --verbose "${APK}"
+            jarsigner -verify -verbose -certs "${AAB}" >/dev/null
+            cp "${APK}" release-artifacts/FamilyGuard-release-signed.apk
+            cp "${AAB}" release-artifacts/FamilyGuard-release-signed.aab
+            echo "Signed APK and AAB signatures verified."
+          else
+            APK="app/build/outputs/apk/release/app-release-unsigned.apk"
+            AAB="app/build/outputs/bundle/release/app-release.aab"
+            test -s "${APK}"
+            test -s "${AAB}"
+            cp "${APK}" release-artifacts/FamilyGuard-release-unsigned.apk
+            cp "${AAB}" release-artifacts/FamilyGuard-release-unsigned.aab
+            echo "::warning::Artifacts are unsigned. They are for local testing only; configure the four ANDROID_* signing secrets before Play Store upload."
+          fi
           sha256sum release-artifacts/*
 
       - name: Upload release artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: FamilyGuard-PlayStore-Ready
+          name: FamilyGuard-Release-Artifacts
           path: release-artifacts/*
           if-no-files-found: error
           retention-days: 30
