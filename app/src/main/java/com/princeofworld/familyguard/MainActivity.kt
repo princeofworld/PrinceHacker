@@ -291,6 +291,11 @@ class MainActivity : ComponentActivity() {
             notice = "Grant foreground location permission first, then try again."
             return
         }
+        if (!hasNotificationPermission()) {
+            notice = "Allow notifications so Android can show the persistent sharing notification."
+            if (Build.VERSION.SDK_INT >= 33) notificationsPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+            return
+        }
         if (familyId.isBlank()) { notice = "Sign in and create or join a family first."; return }
         if (BuildConfig.FAMILYGUARD_API_BASE_URL.isBlank() || BuildConfig.FIREBASE_WEB_API_KEY.isBlank()) {
             notice = "Add FAMILYGUARD_API_BASE_URL and FIREBASE_WEB_API_KEY to GitHub Secrets, then rebuild."
@@ -305,10 +310,10 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun stopFamilyLocationSharing() {
+        stopService(Intent(this, FamilyLocationService::class.java))
         runFamilyTask {
             val id = familyId.ifBlank { getSharedPreferences("familyguard_family", MODE_PRIVATE).getString("familyId", "") ?: "" }
             if (id.isNotBlank()) FamilyGuardApi.post(this, "/family/consent", JSONObject().put("familyId", id).put("shareLocation", false))
-            stopService(Intent(this, FamilyLocationService::class.java))
             "Sharing stopped and consent revoked."
         }
     }
