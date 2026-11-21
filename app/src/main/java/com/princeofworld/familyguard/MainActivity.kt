@@ -46,12 +46,12 @@ import com.android.billingclient.api.BillingClient
 import com.android.billingclient.api.BillingClientStateListener
 import com.android.billingclient.api.BillingFlowParams
 import com.android.billingclient.api.BillingResult
-import com.android.billingclient.api.ConsumeParams
 import com.android.billingclient.api.ProductDetails
 import com.android.billingclient.api.Purchase
 import com.android.billingclient.api.QueryProductDetailsParams
 import com.android.billingclient.api.QueryPurchasesParams
 import com.android.billingclient.api.AcknowledgePurchaseParams
+import com.android.billingclient.api.PendingPurchasesParams
 import java.text.DateFormat
 import java.util.Date
 
@@ -85,7 +85,7 @@ class MainActivity : ComponentActivity() {
     private val billingClient by lazy {
         BillingClient.newBuilder(this)
             .setListener { result, purchases -> handlePurchases(result, purchases.orEmpty()) }
-            .enablePendingPurchases()
+            .enablePendingPurchases(PendingPurchasesParams.newBuilder().enableOneTimeProducts().build())
             .build()
     }
 
@@ -132,7 +132,7 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onDestroy() {
-        if (::billingClient.isInitialized) billingClient.endConnection()
+        billingClient.endConnection()
         super.onDestroy()
     }
 
@@ -162,7 +162,7 @@ class MainActivity : ComponentActivity() {
         val params = QueryProductDetailsParams.newBuilder().setProductList(listOf(product)).build()
         billingClient.queryProductDetailsAsync(params) { result, details ->
             if (result.responseCode == BillingClient.BillingResponseCode.OK) {
-                productDetails = details.firstOrNull()
+                productDetails = details.productDetailsList.firstOrNull()
                 billingMessage = if (productDetails == null) {
                     "Subscription product not found. Configure the product in Play Console."
                 } else "₹999/month subscription is available through Google Play."
