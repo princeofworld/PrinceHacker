@@ -15,14 +15,14 @@ val hasReleaseSigning = !releaseKeystorePath.isNullOrBlank() &&
 
 android {
     namespace = "com.princeofworld.familyguard"
-    compileSdk = 34
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "com.princeofworld.familyguard"
         minSdk = 26
-        targetSdk = 34
-        versionCode = 2
-        versionName = "1.0.0"
+        targetSdk = 36
+        versionCode = 3
+        versionName = "1.1.0"
     }
 
     signingConfigs {
@@ -43,7 +43,7 @@ android {
         }
         release {
             if (hasReleaseSigning) signingConfig = signingConfigs.getByName("release")
-            isMinifyEnabled = false
+            isMinifyEnabled = true
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
