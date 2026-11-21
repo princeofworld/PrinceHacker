@@ -35,6 +35,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -79,6 +80,10 @@ class MainActivity : ComponentActivity() {
     private var pendingDisclosure by mutableStateOf<String?>(null)
     private var permissionStatusText by mutableStateOf("Checking permissions…")
     private var showDeleteDataDialog by mutableStateOf(false)
+    private var familyStatus by mutableStateOf("Sign in with Firebase to create or join a family.")
+    private var familyId by mutableStateOf("")
+    private var inviteCode by mutableStateOf("")
+    private var familyLocationsText by mutableStateOf("No family locations loaded.")
 
     private val locationPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
@@ -135,6 +140,17 @@ class MainActivity : ComponentActivity() {
                     premiumPriceLabel = premiumPriceLabel,
                     locationText = locationText,
                     usageText = usageText,
+                    familyStatus = familyStatus,
+                    familyId = familyId,
+                    inviteCode = inviteCode,
+                    familyLocationsText = familyLocationsText,
+                    onFamilyAuth = { email, password, create -> authenticateFamily(email, password, create) },
+                    onCreateFamily = { name -> createFamily(name) },
+                    onJoinFamily = { code -> joinFamily(code) },
+                    onFamilyConsent = { enabled -> setFamilyConsent(enabled) },
+                    onStartSharing = { startFamilyLocationSharing() },
+                    onStopSharing = { stopFamilyLocationSharing() },
+                    onFetchFamilyLocations = { fetchFamilyLocations() },
                     onLocation = {
                         locationPermissionLauncher.launch(arrayOf(
                             Manifest.permission.ACCESS_FINE_LOCATION,
@@ -215,6 +231,101 @@ class MainActivity : ComponentActivity() {
         billingClient.endConnection()
         verificationExecutor.shutdownNow()
         super.onDestroy()
+    }
+
+    private fun runFamilyTask(action: () -> String) {
+        verificationExecutor.execute {
+            try {
+                val message = action()
+                runOnUiThread { familyStatus = message }
+            } catch (e: Exception) {
+                runOnUiThread { familyStatus = e.message ?: "Family service request failed." }
+            }
+        }
+    }
+
+    private fun authenticateFamily(email: String, password: String, create: Boolean) {
+        runFamilyTask {
+            val result = FamilyGuardApi.authenticate(email.trim(), password, create)
+            val expires = result.optString("expiresIn", "3600").toLongOrNull() ?: 3600L
+            getSharedPreferences("familyguard_family", MODE_PRIVATE).edit()
+                .putString("idToken", result.getString("idToken"))
+                .putString("refreshToken", result.getString("refreshToken"))
+                .putString("uid", result.getString("localId"))
+                .putLong("tokenExpiry", System.currentTimeMillis() + expires * 1000L).apply()
+            "Firebase account " + (if (create) "created" else "signed in")
+        }
+    }
+
+    private fun createFamily(name: String) {
+        runFamilyTask {
+            val result = FamilyGuardApi.post(this, "/family/create", JSONObject().put("displayName", name))
+            familyId = result.getString("familyId")
+            inviteCode = result.getString("inviteCode")
+            getSharedPreferences("familyguard_family", MODE_PRIVATE).edit().putString("familyId", familyId).apply()
+            "Family created. Invite code " + inviteCode + " (valid for 15 minutes)."
+        }
+    }
+
+    private fun joinFamily(code: String) {
+        runFamilyTask {
+            val result = FamilyGuardApi.post(this, "/family/join", JSONObject().put("inviteCode", code))
+            familyId = result.getString("familyId")
+            getSharedPreferences("familyguard_family", MODE_PRIVATE).edit().putString("familyId", familyId).apply()
+            "Joined family " + result.optString("familyName", "")
+        }
+    }
+
+    private fun setFamilyConsent(enabled: Boolean) {
+        runFamilyTask {
+            val id = familyId.ifBlank { getSharedPreferences("familyguard_family", MODE_PRIVATE).getString("familyId", "") ?: "" }
+            require(id.isNotBlank()) { "Create or join a family first." }
+            FamilyGuardApi.post(this, "/family/consent", JSONObject().put("familyId", id).put("shareLocation", enabled))
+            if (!enabled) stopService(Intent(this, FamilyLocationService::class.java))
+            if (enabled) "Location consent enabled. Press Start live sharing to begin." else "Location consent revoked."
+        }
+    }
+
+    private fun startFamilyLocationSharing() {
+        if (!hasLocationPermission()) {
+            notice = "Grant foreground location permission first, then try again."
+            return
+        }
+        if (familyId.isBlank()) { notice = "Sign in and create or join a family first."; return }
+        if (BuildConfig.FAMILYGUARD_API_BASE_URL.isBlank() || BuildConfig.FIREBASE_WEB_API_KEY.isBlank()) {
+            notice = "Add FAMILYGUARD_API_BASE_URL and FIREBASE_WEB_API_KEY to GitHub Secrets, then rebuild."
+            return
+        }
+        runFamilyTask {
+            FamilyGuardApi.post(this, "/family/consent", JSONObject().put("familyId", familyId).put("shareLocation", true))
+            val intent = Intent(this, FamilyLocationService::class.java)
+            if (Build.VERSION.SDK_INT >= 26) startForegroundService(intent) else startService(intent)
+            "Live sharing is on. Android displays a persistent notification."
+        }
+    }
+
+    private fun stopFamilyLocationSharing() {
+        runFamilyTask {
+            val id = familyId.ifBlank { getSharedPreferences("familyguard_family", MODE_PRIVATE).getString("familyId", "") ?: "" }
+            if (id.isNotBlank()) FamilyGuardApi.post(this, "/family/consent", JSONObject().put("familyId", id).put("shareLocation", false))
+            stopService(Intent(this, FamilyLocationService::class.java))
+            "Sharing stopped and consent revoked."
+        }
+    }
+
+    private fun fetchFamilyLocations() {
+        runFamilyTask {
+            val id = familyId.ifBlank { getSharedPreferences("familyguard_family", MODE_PRIVATE).getString("familyId", "") ?: "" }
+            require(id.isNotBlank()) { "Create or join a family first." }
+            val result = FamilyGuardApi.get(this, "/location/family?familyId=" + java.net.URLEncoder.encode(id, "UTF-8"))
+            val array = result.optJSONArray("locations")
+            val rows = (0 until (array?.length() ?: 0)).map { i ->
+                val item = array!!.getJSONObject(i)
+                "Member " + item.optString("uid").take(8) + ": %.5f, %.5f".format(item.optDouble("latitude"), item.optDouble("longitude"))
+            }
+            familyLocationsText = if (rows.isEmpty()) "No opted-in family locations available." else rows.joinToString("\n")
+            "Family locations refreshed."
+        }
     }
 
     private fun openWebPage(url: String) {
@@ -571,6 +682,17 @@ private fun FamilyGuardDashboard(
     premiumPriceLabel: String,
     locationText: String,
     usageText: String,
+    familyStatus: String,
+    familyId: String,
+    inviteCode: String,
+    familyLocationsText: String,
+    onFamilyAuth: (String, String, Boolean) -> Unit,
+    onCreateFamily: (String) -> Unit,
+    onJoinFamily: (String) -> Unit,
+    onFamilyConsent: (Boolean) -> Unit,
+    onStartSharing: () -> Unit,
+    onStopSharing: () -> Unit,
+    onFetchFamilyLocations: () -> Unit,
     onLocation: () -> Unit,
     onUpgrade: () -> Unit,
     onRestore: () -> Unit,
@@ -611,6 +733,9 @@ private fun FamilyGuardDashboard(
             DashboardCard("Live Location", locationText) {
                 Button(onClick = onLocation, modifier = Modifier.fillMaxWidth()) { Text("Request / refresh location") }
             }
+            FamilySharingCard(familyStatus, familyId, inviteCode, familyLocationsText, premium,
+                onFamilyAuth, onCreateFamily, onJoinFamily, onFamilyConsent,
+                onStartSharing, onStopSharing, onFetchFamilyLocations)
             DashboardCard("SOS Safety Alert", "Prepare a message in the device SMS app. Nothing is sent automatically; you review and send it yourself.") {
                 Button(onClick = onSos, modifier = Modifier.fillMaxWidth()) { Text("Prepare SOS message") }
             }
@@ -647,5 +772,42 @@ private fun DashboardCard(title: String, description: String, content: @Composab
             Text(description, style = MaterialTheme.typography.bodyMedium)
             content()
         }
+    }
+}
+
+
+@Composable
+private fun FamilySharingCard(
+    status: String, familyId: String, inviteCode: String, locations: String, premium: Boolean,
+    onAuth: (String, String, Boolean) -> Unit, onCreate: (String) -> Unit, onJoin: (String) -> Unit,
+    onConsent: (Boolean) -> Unit, onStart: () -> Unit, onStop: () -> Unit, onFetch: () -> Unit
+) {
+    var email by remember { mutableStateOf("") }
+    var password by remember { mutableStateOf("") }
+    var familyName by remember { mutableStateOf("My Family") }
+    var code by remember { mutableStateOf("") }
+    var consent by remember { mutableStateOf(false) }
+    DashboardCard("Family Location Sharing", "Sign in, create or join a family, then explicitly opt in. Sharing is visible and revocable.") {
+        OutlinedTextField(email, { email = it }, label = { Text("Firebase email") }, modifier = Modifier.fillMaxWidth())
+        OutlinedTextField(password, { password = it }, label = { Text("Password") }, modifier = Modifier.fillMaxWidth())
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Button(onClick = { onAuth(email, password, false) }, enabled = email.isNotBlank() && password.length >= 6) { Text("Sign in") }
+            OutlinedButton(onClick = { onAuth(email, password, true) }, enabled = email.isNotBlank() && password.length >= 6) { Text("Create account") }
+        }
+        Text(status, style = MaterialTheme.typography.bodySmall)
+        OutlinedTextField(familyName, { familyName = it }, label = { Text("Family name") }, modifier = Modifier.fillMaxWidth())
+        Button(onClick = { onCreate(familyName) }, enabled = premium, modifier = Modifier.fillMaxWidth()) { Text("Create family (Premium)") }
+        if (inviteCode.isNotBlank()) Text("Invite code: " + inviteCode, style = MaterialTheme.typography.titleLarge)
+        OutlinedTextField(code, { code = it.filter(Char::isDigit).take(6) }, label = { Text("6-digit invite code") }, modifier = Modifier.fillMaxWidth())
+        OutlinedButton(onClick = { onJoin(code) }, enabled = code.length == 6, modifier = Modifier.fillMaxWidth()) { Text("Join family") }
+        if (familyId.isNotBlank()) Text("Family ID: " + familyId, style = MaterialTheme.typography.bodySmall)
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Switch(checked = consent, onCheckedChange = { consent = it; onConsent(it) })
+            Text("I explicitly consent to share my location with this family.")
+        }
+        Button(onClick = onStart, enabled = consent && familyId.isNotBlank(), modifier = Modifier.fillMaxWidth()) { Text("Start live sharing") }
+        OutlinedButton(onClick = onStop, modifier = Modifier.fillMaxWidth()) { Text("Stop sharing and revoke consent") }
+        OutlinedButton(onClick = onFetch, modifier = Modifier.fillMaxWidth()) { Text("Refresh family locations") }
+        Text(locations, style = MaterialTheme.typography.bodySmall)
     }
 }
