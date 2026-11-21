@@ -81,7 +81,7 @@ class MainActivity : ComponentActivity() {
     private var pendingDisclosure by mutableStateOf<String?>(null)
     private var permissionStatusText by mutableStateOf("Checking permissions…")
     private var showDeleteDataDialog by mutableStateOf(false)
-    private var familyStatus by mutableStateOf("Sign in with Firebase to create or join a family.")
+    private var familyStatus by mutableStateOf("Sign in to FamilyGuard to create or join a family.")
     private var familyId by mutableStateOf("")
     private var inviteCode by mutableStateOf("")
     private var familyLocationsText by mutableStateOf("No family locations loaded.")
@@ -200,7 +200,7 @@ class MainActivity : ComponentActivity() {
                     AlertDialog(
                         onDismissRequest = { showDeleteDataDialog = false },
                         title = { Text("Delete FamilyGuard data?") },
-                        text = { Text("This version has no cloud account or server-stored family data. This action clears the local consent preference and resets local app settings. Google Play subscription billing is managed separately in Google Play.") },
+                        text = { Text("FamilyGuard account and family data are stored on the service. This local action clears app settings; use the account-data endpoint to request server data deletion. Google Play billing is managed separately.") },
                         confirmButton = {
                             TextButton(onClick = {
                                 getSharedPreferences("familyguard_privacy", Context.MODE_PRIVATE).edit().clear().apply()
@@ -258,7 +258,7 @@ class MainActivity : ComponentActivity() {
                 .putString("refreshToken", result.getString("refreshToken"))
                 .putString("uid", result.getString("localId"))
                 .putLong("tokenExpiry", System.currentTimeMillis() + expires * 1000L).apply()
-            "Firebase account " + (if (create) "created" else "signed in")
+            "FamilyGuard account " + (if (create) "created" else "signed in")
         }
     }
 
@@ -809,10 +809,10 @@ private fun FamilySharingCard(
     var code by remember { mutableStateOf("") }
     var consent by remember(familyId) { mutableStateOf(consentInitiallyEnabled) }
     DashboardCard("Family Location Sharing", "Sign in, create or join a family, then explicitly opt in. Sharing is visible and revocable.") {
-        OutlinedTextField(email, { email = it }, label = { Text("Firebase email") }, modifier = Modifier.fillMaxWidth())
+        OutlinedTextField(email, { email = it }, label = { Text("Email address") }, modifier = Modifier.fillMaxWidth())
         OutlinedTextField(password, { password = it }, label = { Text("Password") }, visualTransformation = PasswordVisualTransformation(), modifier = Modifier.fillMaxWidth())
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Button(onClick = { onAuth(email, password, false) }, enabled = email.isNotBlank() && password.length >= 6) { Text("Sign in") }
+            Button(onClick = { onAuth(email, password, false) }, enabled = email.isNotBlank() && password.length >= 10) { Text("Sign in") }
             OutlinedButton(onClick = { onAuth(email, password, true) }, enabled = email.isNotBlank() && password.length >= 6) { Text("Create account") }
         }
         Text(status, style = MaterialTheme.typography.bodySmall)
