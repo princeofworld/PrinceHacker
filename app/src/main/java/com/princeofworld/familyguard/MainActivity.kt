@@ -68,6 +68,9 @@ class MainActivity : ComponentActivity() {
     private var productDetails: ProductDetails? = null
     private var safetyAlertsEnabled by mutableStateOf(false)
     private var notice by mutableStateOf<String?>(null)
+    private var pendingDisclosure by mutableStateOf<String?>(null)
+    private var permissionStatusText by mutableStateOf("Checking permissions…")
+    private var showDeleteDataDialog by mutableStateOf(false)
 
     private val locationPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
@@ -76,12 +79,21 @@ class MainActivity : ComponentActivity() {
             grants[Manifest.permission.ACCESS_COARSE_LOCATION] == true
         ) readCurrentLocation()
         else locationText = "Location permission was not granted. Location remains off."
+        pendingDisclosure = if (Build.VERSION.SDK_INT >= 33) "notifications" else if (premium) "usage" else null
+        updatePermissionStatus()
+    }
+
+    private val notificationsPermissionLauncher = registerForActivityResult(ActivityResultContracts.RequestPermission()) {
+        updatePermissionStatus()
+        pendingDisclosure = if (premium) "usage" else null
     }
 
     private val usageSettingsLauncher = registerForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) {
         refreshUsageReport()
+        updatePermissionStatus()
+        pendingDisclosure = null
     }
 
     private val billingClient by lazy {
@@ -188,11 +200,32 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         if (consentAccepted) refreshUsageReport()
+        updatePermissionStatus()
     }
 
     override fun onDestroy() {
         billingClient.endConnection()
         super.onDestroy()
+    }
+
+    private fun openWebPage(url: String) {
+        try { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) }
+        catch (_: Exception) { notice = "The page could not be opened." }
+    }
+
+    private fun hasLocationPermission(): Boolean =
+        checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED ||
+            checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
+
+    private fun hasNotificationPermission(): Boolean =
+        Build.VERSION.SDK_INT < 33 ||
+            checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
+
+    private fun updatePermissionStatus() {
+        val location = if (hasLocationPermission()) "Granted" else "Pending"
+        val notifications = if (hasNotificationPermission()) "Granted" else "Pending"
+        val usage = if (hasUsageAccess()) "Granted" else if (premium) "Pending" else "Premium only"
+        permissionStatusText = "Location: $location\\nNotifications: $notifications\\nUsage Access: $usage\\nBackground location: Not requested (no background tracking)\\nBattery exemption: Not requested (not needed)"
     }
 
     private fun connectBilling() {
@@ -466,7 +499,12 @@ private fun FamilyGuardDashboard(
     onRestore: () -> Unit,
     onUsage: () -> Unit,
     onSos: () -> Unit,
-    onNotice: (String) -> Unit
+    onNotice: (String) -> Unit,
+    permissionStatusText: String,
+    onSetupPermissions: () -> Unit,
+    onPrivacy: () -> Unit,
+    onTerms: () -> Unit,
+    onDeleteData: () -> Unit
 ) {
     Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
         Column(
