@@ -126,8 +126,53 @@ class MainActivity : ComponentActivity() {
                     onRestore = { restorePurchases() },
                     onUsage = { openUsageAccessSettings() },
                     onSos = { sendSosAlert() },
-                    onNotice = { notice = it }
+                    onNotice = { notice = it },
+                    permissionStatusText = permissionStatusText,
+                    onSetupPermissions = { pendingDisclosure = "location" },
+                    onPrivacy = { openWebPage("https://raw.githubusercontent.com/princeofworld/PrinceHacker/main/PRIVACY_POLICY.md") },
+                    onTerms = { openWebPage("https://raw.githubusercontent.com/princeofworld/PrinceHacker/main/TERMS_OF_SERVICE.md") },
+                    onDeleteData = { showDeleteDataDialog = true }
                 )
+                pendingDisclosure?.let { step ->
+                    val disclosure = when (step) {
+                        "location" -> "FamilyGuard requests foreground location only. Android will show its permission prompt. Location is not continuously collected or shared in the background."
+                        "notifications" -> "FamilyGuard requests permission for visible safety and account notices. You can deny this and continue using features that do not require notifications."
+                        else -> "This optional Premium report reads app usage on this device. Android will open Usage Access settings so you can explicitly enable or decline it."
+                    }
+                    AlertDialog(
+                        onDismissRequest = { pendingDisclosure = null },
+                        title = { Text("Before enabling $step") },
+                        text = { Text(disclosure) },
+                        confirmButton = {
+                            TextButton(onClick = {
+                                pendingDisclosure = null
+                                when (step) {
+                                    "location" -> locationPermissionLauncher.launch(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION))
+                                    "notifications" -> if (Build.VERSION.SDK_INT >= 33) notificationsPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS) else if (premium) pendingDisclosure = "usage"
+                                    "usage" -> if (premium) usageSettingsLauncher.launch(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS))
+                                }
+                            }) { Text("Agree and continue") }
+                        },
+                        dismissButton = { TextButton(onClick = { pendingDisclosure = null }) { Text("Not now") } }
+                    )
+                }
+                if (showDeleteDataDialog) {
+                    AlertDialog(
+                        onDismissRequest = { showDeleteDataDialog = false },
+                        title = { Text("Delete FamilyGuard data?") },
+                        text = { Text("This version has no cloud account or server-stored family data. This action clears the local consent preference and resets local app settings. Google Play subscription billing is managed separately in Google Play.") },
+                        confirmButton = {
+                            TextButton(onClick = {
+                                getSharedPreferences("familyguard_privacy", Context.MODE_PRIVATE).edit().clear().apply()
+                                consentAccepted = false
+                                premium = false
+                                showDeleteDataDialog = false
+                                recreate()
+                            }) { Text("Delete local data") }
+                        },
+                        dismissButton = { TextButton(onClick = { showDeleteDataDialog = false }) { Text("Cancel") } }
+                    )
+                }
                 notice?.let { message ->
                     AlertDialog(
                         onDismissRequest = { notice = null },
@@ -464,6 +509,16 @@ private fun FamilyGuardDashboard(
                 } else OutlinedButton(onClick = onUpgrade, modifier = Modifier.fillMaxWidth()) {
                     Text("Unlock Premium reports")
                 }
+            }
+            DashboardCard("Permission setup", "Each sensitive permission is disclosed before its Android prompt. Background location and battery exemption are not requested because this version has no background tracking service.") {
+                Text(permissionStatusText, style = MaterialTheme.typography.bodyMedium)
+                Button(onClick = onSetupPermissions, modifier = Modifier.fillMaxWidth()) { Text("One-Click Setup All Permissions") }
+                OutlinedButton(onClick = onSetupPermissions, modifier = Modifier.fillMaxWidth()) { Text("Retry Missing Permissions") }
+            }
+            DashboardCard("About & Settings", "Review the policies or clear local FamilyGuard settings. This version does not create a cloud account.") {
+                OutlinedButton(onClick = onPrivacy, modifier = Modifier.fillMaxWidth()) { Text("Privacy Policy") }
+                OutlinedButton(onClick = onTerms, modifier = Modifier.fillMaxWidth()) { Text("Terms of Service") }
+                OutlinedButton(onClick = onDeleteData, modifier = Modifier.fillMaxWidth()) { Text("Account / Data Deletion") }
             }
             DashboardCard("Privacy & consent", "Location is read only after the user grants Android runtime permission. Usage reports require Premium and a separate manual Usage Access grant in Android Settings. Data is displayed on this device; this sample does not silently upload activity or location.") {
                 Text("Monitoring is visible and user-controlled. The device user can revoke permissions in Android Settings at any time.", style = MaterialTheme.typography.bodySmall)
