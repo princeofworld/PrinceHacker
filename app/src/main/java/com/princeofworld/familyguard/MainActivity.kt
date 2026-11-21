@@ -43,6 +43,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import com.android.billingclient.api.BillingClient
 import com.android.billingclient.api.BillingClientStateListener
@@ -266,7 +267,8 @@ class MainActivity : ComponentActivity() {
             val result = FamilyGuardApi.post(this, "/family/create", JSONObject().put("displayName", name))
             familyId = result.getString("familyId")
             inviteCode = result.getString("inviteCode")
-            getSharedPreferences("familyguard_family", MODE_PRIVATE).edit().putString("familyId", familyId).apply()
+            familyConsentEnabled = false
+            getSharedPreferences("familyguard_family", MODE_PRIVATE).edit().putString("familyId", familyId).putBoolean("locationConsent", false).apply()
             "Family created. Invite code " + inviteCode + " (valid for 15 minutes)."
         }
     }
@@ -275,7 +277,8 @@ class MainActivity : ComponentActivity() {
         runFamilyTask {
             val result = FamilyGuardApi.post(this, "/family/join", JSONObject().put("inviteCode", code))
             familyId = result.getString("familyId")
-            getSharedPreferences("familyguard_family", MODE_PRIVATE).edit().putString("familyId", familyId).apply()
+            familyConsentEnabled = false
+            getSharedPreferences("familyguard_family", MODE_PRIVATE).edit().putString("familyId", familyId).putBoolean("locationConsent", false).apply()
             "Joined family " + result.optString("familyName", "")
         }
     }
@@ -803,10 +806,10 @@ private fun FamilySharingCard(
     var password by remember { mutableStateOf("") }
     var familyName by remember { mutableStateOf("My Family") }
     var code by remember { mutableStateOf("") }
-    var consent by remember { mutableStateOf(consentInitiallyEnabled) }
+    var consent by remember(familyId) { mutableStateOf(consentInitiallyEnabled) }
     DashboardCard("Family Location Sharing", "Sign in, create or join a family, then explicitly opt in. Sharing is visible and revocable.") {
         OutlinedTextField(email, { email = it }, label = { Text("Firebase email") }, modifier = Modifier.fillMaxWidth())
-        OutlinedTextField(password, { password = it }, label = { Text("Password") }, modifier = Modifier.fillMaxWidth())
+        OutlinedTextField(password, { password = it }, label = { Text("Password") }, visualTransformation = PasswordVisualTransformation(), modifier = Modifier.fillMaxWidth())
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Button(onClick = { onAuth(email, password, false) }, enabled = email.isNotBlank() && password.length >= 6) { Text("Sign in") }
             OutlinedButton(onClick = { onAuth(email, password, true) }, enabled = email.isNotBlank() && password.length >= 6) { Text("Create account") }
