@@ -141,3 +141,21 @@ jobs:
           path: release-artifacts/*
           if-no-files-found: error
           retention-days: 30
+
+      - name: Publish signed APK and AAB as GitHub Release assets
+        if: success()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          APK="release-artifacts/FamilyGuard-release-signed.apk"
+          AAB="release-artifacts/FamilyGuard-release-signed.aab"
+          if [[ -s "${APK}" && -s "${AAB}" ]]; then
+            TAG="familyguard-v1.3.0-build-${GITHUB_RUN_NUMBER}"
+            gh release create "${TAG}" "${APK}" "${AAB}" \
+              --title "FamilyGuard 1.3.0 - Build #${GITHUB_RUN_NUMBER}" \
+              --notes "Signed release APK and Play Console AAB. Both signatures were verified in GitHub Actions."
+          else
+            echo "Signed release assets not found; unsigned artifacts are not published as Play Store downloads."
+          fi
