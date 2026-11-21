@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: familyguard-api
+    name: princehacker
     runtime: python
     plan: free
     rootDir: backend
@@ -14,7 +14,5 @@ services:
         value: familyguard_premium_999_monthly
       - key: PLAY_SUBSCRIPTION_BASE_PLAN_ID
         value: monthly-999
-      - key: FIREBASE_SERVICE_ACCOUNT_JSON
-        sync: false
-      - key: GOOGLE_PLAY_SERVICE_ACCOUNT_JSON
-        sync: false
+      - key: INVITE_TTL_MINUTES
+        value: 15
