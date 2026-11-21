@@ -307,8 +307,8 @@ class MainActivity : ComponentActivity() {
             return
         }
         if (familyId.isBlank()) { notice = "Sign in and create or join a family first."; return }
-        if (BuildConfig.FAMILYGUARD_API_BASE_URL.isBlank() || BuildConfig.FIREBASE_WEB_API_KEY.isBlank()) {
-            notice = "Add FAMILYGUARD_API_BASE_URL and FIREBASE_WEB_API_KEY to GitHub Secrets, then rebuild."
+        if (BuildConfig.FAMILYGUARD_API_BASE_URL.isBlank()) {
+            notice = "FamilyGuard service URL is not configured. Please try again after the service is available."
             return
         }
         runFamilyTask {
