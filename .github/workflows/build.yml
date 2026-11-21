@@ -93,8 +93,10 @@ jobs:
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
-          FAMILYGUARD_VERIFY_URL: ${{ secrets.FAMILYGUARD_VERIFY_URL }}
-        run: gradle --no-daemon --stacktrace -PfamilyguardVerifyUrl="${FAMILYGUARD_VERIFY_URL:-}" :app:assembleRelease :app:bundleRelease
+          FAMILYGUARD_VERIFY_URL: ${{ secrets.FAMILYGUARD_API_BASE_URL || secrets.FAMILYGUARD_VERIFY_URL }}
+          FAMILYGUARD_API_BASE_URL: ${{ secrets.FAMILYGUARD_API_BASE_URL }}
+          FIREBASE_WEB_API_KEY: ${{ secrets.FIREBASE_WEB_API_KEY }}
+        run: gradle --no-daemon --stacktrace -PfamilyguardVerifyUrl="${FAMILYGUARD_VERIFY_URL:-}" -PfamilyguardApiBaseUrl="${FAMILYGUARD_API_BASE_URL:-}" :app:assembleRelease :app:bundleRelease
 
       - name: Verify and stage release outputs
         shell: bash
