@@ -55,9 +55,15 @@ import com.android.billingclient.api.AcknowledgePurchaseParams
 import com.android.billingclient.api.PendingPurchasesParams
 import java.text.DateFormat
 import java.util.Date
+import java.net.HttpURLConnection
+import java.net.URL
+import java.io.OutputStreamWriter
+import java.util.concurrent.Executors
+import org.json.JSONObject
 
 private const val PREMIUM_PRODUCT_ID = "familyguard_premium_999_monthly"
 private const val PREMIUM_BASE_PLAN_ID = "monthly-999"
+private const val PLAY_PACKAGE_NAME = "com.princeofworld.familyguard"
 
 class MainActivity : ComponentActivity() {
     private var locationText by mutableStateOf("Location sharing is off. Choose Update location to request access.")
@@ -67,6 +73,7 @@ class MainActivity : ComponentActivity() {
     private var billingReady by mutableStateOf(false)
     private var billingMessage by mutableStateOf("Connecting to Google Play…")
     private var premiumPriceLabel by mutableStateOf("Monthly price shown by Google Play")
+    private val verificationExecutor = Executors.newSingleThreadExecutor()
     private var productDetails: ProductDetails? = null
     private var notice by mutableStateOf<String?>(null)
     private var pendingDisclosure by mutableStateOf<String?>(null)
@@ -206,6 +213,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onDestroy() {
         billingClient.endConnection()
+        verificationExecutor.shutdownNow()
         super.onDestroy()
     }
 
@@ -337,35 +345,87 @@ class MainActivity : ComponentActivity() {
             return
         }
 
-        val alreadyAcknowledged = purchased.any { it.isAcknowledged }
-        val needsAcknowledgement = purchased.filter { !it.isAcknowledged }
-        if (alreadyAcknowledged) {
-            premium = true
-            billingMessage = "Google Play reports an acknowledged Premium purchase."
-        } else if (needsAcknowledgement.isNotEmpty()) {
+        if (purchased.isEmpty()) {
             premium = false
-            billingMessage = "Purchase received. Waiting for Google Play acknowledgement."
-            needsAcknowledgement.forEach { purchase ->
+            billingMessage = "No active Premium purchase found for this Google Play account."
+            refreshUsageReport()
+            return
+        }
+        val unacknowledged = purchased.filter { !it.isAcknowledged }
+        if (unacknowledged.isNotEmpty()) {
+            premium = false
+            billingMessage = "Purchase received. Acknowledging with Google Play before server verification."
+            unacknowledged.forEach { purchase ->
                 billingClient.acknowledgePurchase(
-                    AcknowledgePurchaseParams.newBuilder()
-                        .setPurchaseToken(purchase.purchaseToken)
-                        .build()
+                    AcknowledgePurchaseParams.newBuilder().setPurchaseToken(purchase.purchaseToken).build()
                 ) { ack ->
                     if (ack.responseCode == BillingClient.BillingResponseCode.OK) {
-                        premium = true
-                        billingMessage = "Premium purchase acknowledged by Google Play."
+                        verifyPurchaseWithServer(purchase.purchaseToken)
                     } else {
                         premium = false
                         billingMessage = "Purchase acknowledgement failed: ${ack.debugMessage}"
                     }
-                    refreshUsageReport()
                 }
             }
         } else {
-            premium = false
-            billingMessage = "No active Premium purchase found for this Google Play account."
+            verifyPurchaseWithServer(purchased.first().purchaseToken)
         }
-        refreshUsageReport()
+    }
+
+    private fun verifyPurchaseWithServer(purchaseToken: String) {
+        val endpoint = BuildConfig.FAMILYGUARD_VERIFY_URL.trim()
+        if (endpoint.isBlank()) {
+            premium = false
+            billingMessage = "Server verification is not configured. Premium remains locked until a verification URL is set."
+            refreshUsageReport()
+            return
+        }
+        premium = false
+        billingMessage = "Verifying subscription securely with Google Play…"
+        verificationExecutor.execute {
+            var connection: HttpURLConnection? = null
+            try {
+                connection = (URL(endpoint.trimEnd('/') + "/verify-subscription").openConnection() as HttpURLConnection).apply {
+                    requestMethod = "POST"
+                    connectTimeout = 10000
+                    readTimeout = 12000
+                    doOutput = true
+                    setRequestProperty("Content-Type", "application/json")
+                }
+                val body = JSONObject()
+                    .put("packageName", PLAY_PACKAGE_NAME)
+                    .put("productId", PREMIUM_PRODUCT_ID)
+                    .put("basePlanId", PREMIUM_BASE_PLAN_ID)
+                    .put("purchaseToken", purchaseToken)
+                OutputStreamWriter(connection.outputStream, Charsets.UTF_8).use { it.write(body.toString()) }
+                val code = connection.responseCode
+                val stream = if (code in 200..299) connection.inputStream else connection.errorStream
+                val responseText = stream?.bufferedReader()?.use { it.readText() }.orEmpty()
+                val response = JSONObject(responseText)
+                val verifiedActive = code in 200..299 &&
+                    response.optBoolean("verified", false) &&
+                    response.optBoolean("active", false) &&
+                    response.optString("productId") == PREMIUM_PRODUCT_ID &&
+                    response.optString("basePlanId") == PREMIUM_BASE_PLAN_ID
+                runOnUiThread {
+                    premium = verifiedActive
+                    billingMessage = if (verifiedActive) {
+                        "Premium subscription verified by the FamilyGuard server and Google Play."
+                    } else {
+                        "Server did not confirm an active subscription. Premium remains locked."
+                    }
+                    refreshUsageReport()
+                }
+            } catch (_: Exception) {
+                runOnUiThread {
+                    premium = false
+                    billingMessage = "Server verification unavailable. Premium remains locked; try Restore later."
+                    refreshUsageReport()
+                }
+            } finally {
+                connection?.disconnect()
+            }
+        }
     }
 
     private fun hasUsageAccess(): Boolean {
