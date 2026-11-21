@@ -63,10 +63,6 @@ android {
         compose = true
         buildConfig = true
     }
-
-    defaultConfig {
-        buildConfigField("String", "FAMILYGUARD_VERIFY_URL", "\"${providers.gradleProperty("familyguardVerifyUrl").orNull ?: ""}\"")
-    }
 }
 
 dependencies {
