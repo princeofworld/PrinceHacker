@@ -175,7 +175,7 @@ class MainActivity : ComponentActivity() {
                 )
                 pendingDisclosure?.let { step ->
                     val disclosure = when (step) {
-                        "location" -> "FamilyGuard requests foreground location only. Android will show its permission prompt. Location is not continuously collected or shared in the background."
+                        "location" -> "FamilyGuard requests foreground location. Location is sent to your opted-in family only after you separately enable consent and press Start live sharing. A persistent Android notification stays visible while sharing is active; Stop sharing revokes consent."
                         "notifications" -> "FamilyGuard requests permission for visible safety and account notices. You can deny this and continue using features that do not require notifications."
                         else -> "This optional Premium report reads app usage on this device. Android will open Usage Access settings so you can explicitly enable or decline it."
                     }
@@ -767,7 +767,7 @@ private fun FamilyGuardDashboard(
                     Text("Unlock Premium reports")
                 }
             }
-            DashboardCard("Permission setup", "Each sensitive permission is disclosed before its Android prompt. Background location and battery exemption are not requested because this version has no background tracking service.") {
+            DashboardCard("Permission setup", "Each sensitive permission is disclosed before its Android prompt. Background location permission is not requested; optional live sharing uses a visible user-started foreground location service.") {
                 Text(permissionStatusText, style = MaterialTheme.typography.bodyMedium)
                 Button(onClick = onSetupPermissions, modifier = Modifier.fillMaxWidth()) { Text("One-Click Setup All Permissions") }
                 OutlinedButton(onClick = onSetupPermissions, modifier = Modifier.fillMaxWidth()) { Text("Retry Missing Permissions") }
