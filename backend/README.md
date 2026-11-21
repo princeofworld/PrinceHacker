@@ -32,4 +32,4 @@ The API calls Google Play Developer API `purchases.subscriptionsv2.get` and only
 - Restrict service-account permissions to the one Play app.
 - Add production rate limiting and monitoring at the hosting edge before public launch.
 - Free hosting can sleep or throttle; subscription checks should fail closed (no Premium) if verification is unavailable.
-- The Android app does not yet call this API. Configure `BuildConfig.FAMILYGUARD_VERIFY_URL` and add an authenticated HTTPS client before enabling server-authoritative Premium.
+- The Android app calls this API when `FAMILYGUARD_VERIFY_URL` is configured. Set the GitHub Actions repository secret `FAMILYGUARD_VERIFY_URL` to the HTTPS service root (for example, `https://your-service.onrender.com`) so the release workflow injects it as `BuildConfig.FAMILYGUARD_VERIFY_URL`. If it is unset, the app fails closed and keeps Premium locked. The app does not yet integrate Firebase Authentication, so the account-data deletion route is available for a future authenticated client but is not wired to the current Android UI.
