@@ -502,6 +502,7 @@ class MainActivity : ComponentActivity() {
                     readTimeout = 12000
                     doOutput = true
                     setRequestProperty("Content-Type", "application/json")
+                    setRequestProperty("Authorization", "Bearer " + FamilyGuardApi.refreshIdToken(this@MainActivity))
                 }
                 val body = JSONObject()
                     .put("packageName", PLAY_PACKAGE_NAME)
