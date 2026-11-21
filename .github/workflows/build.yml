@@ -40,6 +40,11 @@ jobs:
             echo "Play Store PNG assets are already current."
           fi
 
+      - name: Validate Python backend dependencies and syntax
+        run: |
+          python -m pip install --disable-pip-version-check -r backend/requirements.txt
+          python -m compileall -q backend
+
       - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
