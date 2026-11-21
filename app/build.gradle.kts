@@ -23,9 +23,8 @@ android {
         targetSdk = 36
         versionCode = 5
         versionName = "1.3.0"
-        buildConfigField("String", "FAMILYGUARD_API_BASE_URL", "\"${providers.gradleProperty("familyguardApiBaseUrl").orNull ?: System.getenv("FAMILYGUARD_API_BASE_URL") ?: ""}\"")
-        buildConfigField("String", "FAMILYGUARD_VERIFY_URL", "\"${providers.gradleProperty("familyguardVerifyUrl").orNull ?: System.getenv("FAMILYGUARD_API_BASE_URL") ?: ""}\"")
-        buildConfigField("String", "FIREBASE_WEB_API_KEY", "\"${System.getenv("FIREBASE_WEB_API_KEY") ?: ""}\"")
+        buildConfigField("String", "FAMILYGUARD_API_BASE_URL", "\"${providers.gradleProperty("familyguardApiBaseUrl").orNull ?: System.getenv("FAMILYGUARD_API_BASE_URL") ?: "https://princehacker.onrender.com"}\"")
+        buildConfigField("String", "FAMILYGUARD_VERIFY_URL", "\"${providers.gradleProperty("familyguardVerifyUrl").orNull ?: System.getenv("FAMILYGUARD_API_BASE_URL") ?: "https://princehacker.onrender.com"}\"")
     }
 
     signingConfigs {
