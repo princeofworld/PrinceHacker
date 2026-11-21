@@ -39,6 +39,7 @@ import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
@@ -59,6 +60,7 @@ private const val PREMIUM_PRODUCT_ID = "familyguard_premium_999_monthly"
 
 class MainActivity : ComponentActivity() {
     private var locationText by mutableStateOf("Location sharing is off. Choose Update location to request access.")
+    private var consentAccepted by mutableStateOf(false)
     private var usageText by mutableStateOf("Usage report is available to Premium subscribers after enabling Usage Access.")
     private var premium by mutableStateOf(false)
     private var billingReady by mutableStateOf(false)
@@ -91,10 +93,22 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        consentAccepted = getSharedPreferences("familyguard_privacy", Context.MODE_PRIVATE)
+            .getBoolean("parental_disclosure_accepted_v1", false)
         connectBilling()
         setContent {
             MaterialTheme(colorScheme = darkColorScheme()) {
-                FamilyGuardDashboard(
+                if (!consentAccepted) {
+                    ParentalConsentDisclosureScreen(
+                        onAccept = {
+                            getSharedPreferences("familyguard_privacy", Context.MODE_PRIVATE)
+                                .edit().putBoolean("parental_disclosure_accepted_v1", true).apply()
+                            consentAccepted = true
+                            refreshUsageReport()
+                        },
+                        onDecline = { finish() }
+                    )
+                } else FamilyGuardDashboard(
                     premium = premium,
                     billingReady = billingReady,
                     billingMessage = billingMessage,
@@ -128,7 +142,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
-        refreshUsageReport()
+        if (consentAccepted) refreshUsageReport()
     }
 
     override fun onDestroy() {
@@ -264,6 +278,10 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun refreshUsageReport() {
+        if (!consentAccepted) {
+            usageText = "Usage Access remains off until the parent/guardian disclosure is accepted."
+            return
+        }
         if (!premium) {
             usageText = "Premium required. Your usage data is not read or collected on the Free plan."
             return
@@ -330,6 +348,48 @@ class MainActivity : ComponentActivity() {
             .putExtra("sms_body", text)
         if (intent.resolveActivity(packageManager) != null) startActivity(intent)
         else notice = "No SMS app is available. SOS was not sent."
+    }
+}
+
+
+@Composable
+private fun ParentalConsentDisclosureScreen(
+    onAccept: () -> Unit,
+    onDecline: () -> Unit
+) {
+    var parentConfirmed by remember { mutableStateOf(false) }
+    Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+        Column(
+            modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
+            Text("FamilyGuard — Important privacy notice", style = MaterialTheme.typography.headlineMedium)
+            Text(
+                "A parent or legal guardian must review and accept this notice before FamilyGuard can request location permission or open Usage Access settings.",
+                style = MaterialTheme.typography.bodyLarge
+            )
+            Text("Location", style = MaterialTheme.typography.titleMedium)
+            Text("If you choose the location feature, Android will ask for foreground location permission (precise or approximate). Location is used only when you actively request an update and is displayed on this device. This app does not request background location and does not continuously track location.")
+            Text("App usage", style = MaterialTheme.typography.titleMedium)
+            Text("If you choose the Premium usage report, Android Settings will ask you to grant Usage Access (PACKAGE_USAGE_STATS). FamilyGuard reads app usage on this device to show a recent usage summary. You can revoke this access in Android Settings.")
+            Text("Data, sharing and safety", style = MaterialTheme.typography.titleMedium)
+            Text("This version stores the consent choice locally and does not send location or app-usage reports to a FamilyGuard server. Google Play processes subscription payments. Do not use this app to secretly monitor another person. The device user should be told what is enabled and be able to revoke permissions.")
+            Text("Parental consent", style = MaterialTheme.typography.titleMedium)
+            Text("A parent or legal guardian should accept only after explaining the features to the device user and obtaining any consent required by local law. This on-device confirmation is not identity or age verification.")
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Switch(checked = parentConfirmed, onCheckedChange = { parentConfirmed = it })
+                Text("I am the parent/legal guardian (or authorized adult) and have read this notice and consent to enabling the selected features.")
+            }
+            Button(
+                onClick = onAccept,
+                enabled = parentConfirmed,
+                modifier = Modifier.fillMaxWidth()
+            ) { Text("Accept and continue") }
+            OutlinedButton(onClick = onDecline, modifier = Modifier.fillMaxWidth()) {
+                Text("Decline and exit")
+            }
+            Text("You can change Android permissions at any time in Settings. Read PRIVACY_POLICY.md in the project for more information.", style = MaterialTheme.typography.bodySmall)
+        }
     }
 }
 
