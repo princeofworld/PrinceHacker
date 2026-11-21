@@ -23,6 +23,7 @@ android {
         targetSdk = 36
         versionCode = 4
         versionName = "1.2.0"
+        buildConfigField("String", "FAMILYGUARD_VERIFY_URL", "\"${providers.gradleProperty("familyguardVerifyUrl").orNull ?: ""}\"")
     }
 
     signingConfigs {
