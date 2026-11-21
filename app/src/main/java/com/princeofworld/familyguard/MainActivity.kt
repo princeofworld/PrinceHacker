@@ -227,12 +227,29 @@ class MainActivity : ComponentActivity() {
 
     private fun handlePurchases(result: BillingResult, purchases: List<Purchase>) {
         if (result.responseCode != BillingClient.BillingResponseCode.OK) {
+            premium = false
             billingMessage = "Purchase update: ${result.debugMessage}"
             return
         }
         val matching = purchases.filter { it.products.contains(PREMIUM_PRODUCT_ID) }
-        matching.filter { it.purchaseState == Purchase.PurchaseState.PURCHASED && !it.isAcknowledged }
-            .forEach { purchase ->
+        val purchased = matching.filter { it.purchaseState == Purchase.PurchaseState.PURCHASED }
+        val pending = matching.any { it.purchaseState == Purchase.PurchaseState.PENDING }
+
+        if (pending) {
+            premium = false
+            billingMessage = "Purchase pending. Premium stays unavailable until Google Play completes payment."
+            return
+        }
+
+        val alreadyAcknowledged = purchased.any { it.isAcknowledged }
+        val needsAcknowledgement = purchased.filter { !it.isAcknowledged }
+        if (alreadyAcknowledged) {
+            premium = true
+            billingMessage = "Google Play reports an acknowledged Premium purchase."
+        } else if (needsAcknowledgement.isNotEmpty()) {
+            premium = false
+            billingMessage = "Purchase received. Waiting for Google Play acknowledgement."
+            needsAcknowledgement.forEach { purchase ->
                 billingClient.acknowledgePurchase(
                     AcknowledgePurchaseParams.newBuilder()
                         .setPurchaseToken(purchase.purchaseToken)
@@ -242,16 +259,13 @@ class MainActivity : ComponentActivity() {
                         premium = true
                         billingMessage = "Premium purchase acknowledged by Google Play."
                     } else {
-                        billingMessage = "Purchase acknowledgement pending: ${ack.debugMessage}"
+                        premium = false
+                        billingMessage = "Purchase acknowledgement failed: ${ack.debugMessage}"
                     }
+                    refreshUsageReport()
                 }
             }
-        premium = matching.any {
-            it.purchaseState == Purchase.PurchaseState.PURCHASED && it.isAcknowledged
-        } || matching.any { it.purchaseState == Purchase.PurchaseState.PURCHASED && !it.isAcknowledged }
-        if (matching.any { it.purchaseState == Purchase.PurchaseState.PENDING }) {
-            billingMessage = "Purchase pending. Premium stays unavailable until Google Play completes payment."
-        } else if (matching.isEmpty()) {
+        } else {
             premium = false
             billingMessage = "No active Premium purchase found for this Google Play account."
         }
