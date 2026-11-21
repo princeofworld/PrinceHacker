@@ -1,35 +1,51 @@
-# FamilyGuard verification backend
+# FamilyGuard API
 
-## Deploy on Render (free web service)
+FastAPI backend for verified Play subscriptions and opt-in family location sharing.
 
-1. Create a Google Cloud service account dedicated to Play Developer API verification.
-2. Enable the Google Play Android Developer API and grant the service account the minimum Play Console permission needed to view subscription/order data for this app.
-3. In Render, create a Web Service from this repository and set **Root Directory** to `backend`, build command `pip install -r requirements.txt`, and start command `uvicorn main:app --host 0.0.0.0 --port $PORT`.
-4. Set `PLAY_PACKAGE_NAME`, `PLAY_SUBSCRIPTION_PRODUCT_ID`, `PLAY_SUBSCRIPTION_BASE_PLAN_ID`, and `GOOGLE_PLAY_SERVICE_ACCOUNT_JSON_BASE64` as private environment variables. The last value is the base64 encoding of the service-account JSON. Never commit the JSON or paste it into an issue/chat.
-5. Check `/health`. The verification endpoint is `POST /verify-subscription`.
+## Render deployment
 
-## Verify request
+Create a Render Web Service from this repository:
+- Root directory: `backend`
+- Build command: `pip install -r requirements.txt`
+- Start command: `uvicorn main:app --host 0.0.0.0 --port $PORT`
+- Health check: `/health`
 
-```json
-{
-  "packageName": "com.princeofworld.familyguard",
-  "productId": "familyguard_premium_999_monthly",
-  "basePlanId": "monthly-999",
-  "purchaseToken": "PLAY_PURCHASE_TOKEN"
-}
-```
+Set these private Render environment variables:
 
-The API calls Google Play Developer API `purchases.subscriptionsv2.get` and only returns `active: true` when the returned subscription is ACTIVE, has a matching product and base plan, and has a future expiry time. Tokens are not logged or stored. The endpoint is intentionally not a substitute for Android's purchase acknowledgement; the app must acknowledge purchases through Play Billing.
+| Variable | Purpose |
+|---|---|
+| `FIREBASE_SERVICE_ACCOUNT_JSON` | Raw Firebase Admin service-account JSON (secret) |
+| `GOOGLE_PLAY_SERVICE_ACCOUNT_JSON` | Raw Google Play Developer API service-account JSON (secret) |
+| `PACKAGE_NAME` | `com.princeofworld.familyguard` |
+| `PLAY_SUBSCRIPTION_PRODUCT_ID` | `familyguard_premium_999_monthly` |
+| `PLAY_SUBSCRIPTION_BASE_PLAN_ID` | `monthly-999` |
+| `INVITE_TTL_MINUTES` | Optional; defaults to `15` |
 
-## Account data deletion
+The Firebase project must have Email/Password Authentication enabled and Firestore provisioned. The Firebase Admin service account must belong to that project. The Play service account must have the minimum permission to view subscription data in the app's Play Console. Do not commit either JSON key or place them in the Android app.
 
-`DELETE /account-data` requires a Firebase Authentication ID token in the Authorization header and Firebase Admin credentials on the server. It deletes FamilyGuard-owned Firestore documents from `familyguard_user_data` and the account document from `familyguard_accounts`. It does not cancel or delete Google Play billing records. Do not advertise cloud account deletion until Firebase Authentication and Firestore have been configured and the Android sign-in flow has been integrated and tested.
+## GitHub Actions secrets
 
-## Important production setup
+Set:
+- `FAMILYGUARD_API_BASE_URL`: the Render HTTPS service root (for example `https://your-service.onrender.com`)
+- `FIREBASE_WEB_API_KEY`: Firebase project's Web API key (not a service-account secret)
+- For signed releases: `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD`
 
-- Keep service-account JSON only in Render secret environment variables.
-- Use HTTPS only. Do not log request bodies, purchase tokens, Authorization headers, or Google API URLs containing tokens.
-- Restrict service-account permissions to the one Play app.
-- Add production rate limiting and monitoring at the hosting edge before public launch.
-- Free hosting can sleep or throttle; subscription checks should fail closed (no Premium) if verification is unavailable.
-- The Android app calls this API when `FAMILYGUARD_VERIFY_URL` is configured. Set the GitHub Actions repository secret `FAMILYGUARD_VERIFY_URL` to the HTTPS service root (for example, `https://your-service.onrender.com`) so the release workflow injects it as `BuildConfig.FAMILYGUARD_VERIFY_URL`. If it is unset, the app fails closed and keeps Premium locked. The app does not yet integrate Firebase Authentication, so the account-data deletion route is available for a future authenticated client but is not wired to the current Android UI.
+The Android app uses Firebase Identity Toolkit REST sign-in/sign-up, so no `google-services.json` or Google Services Gradle plugin is required. If the Firebase API key or Render URL is unset, family features show a configuration message and remain unavailable. The app receives only the Web API key; Admin and Play service-account JSON stays on Render.
+
+## API
+
+All endpoints except `/health` require `Authorization: Bearer <Firebase ID token>`.
+
+- `POST /verify-subscription`: verifies `purchases.subscriptionsv2.get` for the configured package/product/base plan and stores the authenticated user's verified Premium expiry in Firestore.
+- `POST /family/create`: active verified Premium account creates a family and receives a one-use six-digit invite code (15-minute default expiry).
+- `POST /family/join`: another authenticated account redeems a valid code.
+- `POST /family/consent`: each member explicitly enables or revokes location sharing. Revocation deletes that member's last location immediately.
+- `POST /location/update`: accepts coordinates only from an authenticated member who opted in.
+- `GET /location/family?familyId=...`: returns only locations from members who have opted in. Viewing also requires the viewer to have opted in.
+- `DELETE /account-data`: deletes this account's family membership, location records and Premium entitlement record. Google Play billing is managed separately.
+
+Location transport must use HTTPS. Firestore provides encryption at rest; this is not end-to-end encryption. Location sharing starts only after a visible user action and displays an ongoing Android foreground-service notification. Members can stop sharing and revoke consent from the app. The app does not offer covert/background monitoring without visible disclosure.
+
+## Operational notes
+
+Free Render instances may sleep or throttle; the app must fail closed when the service is unavailable. Add production rate limiting, abuse monitoring, backups, retention policy and security review before public launch. Six-digit codes should be short-lived and are single-use. Do not log ID tokens, purchase tokens, coordinates or request bodies.
