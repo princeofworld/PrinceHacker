@@ -139,11 +139,12 @@ class MainActivity : ComponentActivity() {
                     val disclosure = when (step) {
                         "location" -> "FamilyGuard requests foreground location. Location is sent to your opted-in family only after you separately enable consent and press Start live sharing. A persistent Android notification stays visible while sharing is active; Stop sharing revokes consent."
                         "notifications" -> "FamilyGuard requests permission for visible safety and account notices. You can deny this and continue using features that do not require notifications."
+                        "usage_restricted" -> "Android blocks Usage Access for some sideloaded apps until the device user allows restricted settings. FamilyGuard cannot switch this on. On the next screen, open the three-dot menu and choose Allow restricted settings. Android may ask you to confirm your device lock. Return to FamilyGuard and tap One-Click Permission Setup again; then enable FamilyGuard in Usage Access. If Android does not offer this option, do not bypass the device's security controls."
                         else -> "This optional Premium report reads app usage on this device. Android will open Usage Access settings so you can explicitly enable or decline it."
                     }
                     AlertDialog(
                         onDismissRequest = { pendingDisclosure = null },
-                        title = { Text("Before enabling $step") },
+                        title = { Text(if (step == "usage_restricted") "Android restricted settings" else "Before enabling $step") },
                         text = { Text(disclosure) },
                         confirmButton = {
                             TextButton(onClick = {
@@ -151,6 +152,20 @@ class MainActivity : ComponentActivity() {
                                 when (step) {
                                     "location" -> locationPermissionLauncher.launch(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION))
                                     "notifications" -> if (Build.VERSION.SDK_INT >= 33) notificationsPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS) else if (premium) pendingDisclosure = "usage"
+                                    "usage_restricted" -> {
+                                        getSharedPreferences("familyguard_permissions", Context.MODE_PRIVATE)
+                                            .edit().putBoolean("usage_restricted_help_shown", true).apply()
+                                        try {
+                                            startActivity(
+                                                Intent(
+                                                    Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                                                    Uri.parse("package:$packageName")
+                                                )
+                                            )
+                                        } catch (_: Exception) {
+                                            notice = "Could not open App Info. Open Android Settings > Apps > FamilyGuard manually, then review the three-dot menu."
+                                        }
+                                    }
                                     "usage" -> if (premium) usageSettingsLauncher.launch(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS))
                                 }
                             }) { Text("Agree and continue") }
@@ -338,9 +353,12 @@ class MainActivity : ComponentActivity() {
             checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
 
     private fun beginPermissionSetup() {
+        val restrictedHelpShown = getSharedPreferences("familyguard_permissions", Context.MODE_PRIVATE)
+            .getBoolean("usage_restricted_help_shown", false)
         pendingDisclosure = when {
             !hasLocationPermission() -> "location"
             !hasNotificationPermission() -> "notifications"
+            premium && !hasUsageAccess() && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && !restrictedHelpShown -> "usage_restricted"
             premium && !hasUsageAccess() -> "usage"
             else -> null
         }
@@ -350,7 +368,14 @@ class MainActivity : ComponentActivity() {
     private fun updatePermissionStatus() {
         val location = if (hasLocationPermission()) "Granted" else "Pending"
         val notifications = if (hasNotificationPermission()) "Granted" else "Pending"
-        val usage = if (hasUsageAccess()) "Granted" else if (premium) "Pending" else "Premium only"
+        val restrictedHelpShown = getSharedPreferences("familyguard_permissions", Context.MODE_PRIVATE)
+            .getBoolean("usage_restricted_help_shown", false)
+        val usage = when {
+            hasUsageAccess() -> "Granted"
+            !premium -> "Premium only"
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && !restrictedHelpShown -> "Action needed: review Android Restricted Settings"
+            else -> "Pending: enable FamilyGuard in Usage Access settings"
+        }
         permissionStatusText = "Location: $location\nNotifications: $notifications\nUsage Access: $usage\nBackground location: Not requested (no background tracking)\nBattery exemption: Not requested (not needed)"
     }
 
@@ -433,7 +458,13 @@ class MainActivity : ComponentActivity() {
             notice = "App Usage & Screen Time reports are a Premium feature. Subscribe through the official FamilyGuard website first."
             return
         }
-        usageSettingsLauncher.launch(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS))
+        val restrictedHelpShown = getSharedPreferences("familyguard_permissions", Context.MODE_PRIVATE)
+            .getBoolean("usage_restricted_help_shown", false)
+        if (!hasUsageAccess() && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && !restrictedHelpShown) {
+            pendingDisclosure = "usage_restricted"
+        } else {
+            usageSettingsLauncher.launch(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS))
+        }
     }
 
     private fun refreshUsageReport() {
