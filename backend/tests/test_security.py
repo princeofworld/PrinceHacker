@@ -235,6 +235,34 @@ def test_backup_requires_valid_encryption_key(api, monkeypatch):
     assert response.status_code == 503
 
 
+
+
+
+def test_razorpay_recurring_routes_are_disabled_by_default(api, monkeypatch):
+    _, client = api
+    monkeypatch.delenv("RAZORPAY_ENABLED", raising=False)
+    monkeypatch.setenv("RAZORPAY_KEY_ID", "test-key")
+    monkeypatch.setenv("RAZORPAY_KEY_SECRET", "test-secret")
+    monkeypatch.setenv("RAZORPAY_PLAN_ID", "test-plan")
+    _, _, headers = register(client)
+
+    config = client.get("/billing/config")
+    assert config.status_code == 200
+    assert config.json()["provider"] == "manual_upi"
+    assert config.json()["configured"] is False
+
+    create = client.post("/payment/create-order", headers=headers)
+    assert create.status_code == 503
+    verify = client.post("/payment/verify", headers=headers, json={
+        "razorpay_payment_id": "pay_test",
+        "razorpay_subscription_id": "sub_test",
+        "razorpay_signature": "invalid",
+    })
+    assert verify.status_code == 503
+    webhook = client.post("/payment/webhook", content=b"{}")
+    assert webhook.status_code == 503
+
+
 def test_logout_revokes_only_the_logged_out_device_session(api):
     email, first, first_headers = register(api[1])
     second = api[1].post("/auth/login", json={"email": email, "password": "Correct-Horse-42!"})
