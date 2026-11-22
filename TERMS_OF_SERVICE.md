@@ -15,13 +15,13 @@ Location is sent only after the device user grants foreground location permissio
 Users must protect their sign-in details. Family invite codes are short-lived, one-use codes. Do not share them publicly. Family creation requires a verified active Premium entitlement; joining an existing family requires a valid invite code.
 
 ## 5. Premium subscription
-Direct UPI Premium is a one-time ₹999 payment for 30 days of access. It does not automatically renew; users must make a new payment each period. Users submit a 12-digit UTR and access remains pending until an administrator verifies the matching ₹999 credit in the bank's official transaction history. A UTR, screenshot or forwarded SMS alone is not proof of payment. Premium is never activated by an unverified client-side claim. If Razorpay subscription checkout is separately enabled, its renewal and cancellation terms are shown by the provider. Refund requests are handled under the published Refund & Cancellation Policy and applicable law.
+Direct UPI Premium is a one-time ₹999 payment for 30 days of access. It does not automatically renew; users must make a new payment each period. Users submit a 12-digit UTR and access remains pending until an administrator verifies the matching ₹999 credit in the bank's official transaction history. A UTR, screenshot or forwarded SMS alone is not proof of payment. Premium is never activated by an unverified client-side claim. No recurring payment mandate is created by the current direct UPI flow. Direct UPI payments do not renew automatically, so there is no recurring mandate to cancel. For a payment that is duplicated, incorrect, or not reflected in the account after verification, contact support through the project support page. Refund requests are reviewed under applicable consumer-protection law; this document does not promise an automatic refund.
 
 ## 6. Acceptable use and limitations
 Do not attempt to access another person's account or location without permission. Do not rely on FamilyGuard as the sole means of emergency communication or safety. The service may be unavailable during hosting, network or maintenance interruptions.
 
 ## 7. Data and deletion
-See the [Privacy Policy](https://github.com/princeofworld/PrinceHacker/blob/main/PRIVACY_POLICY.md). Account-data deletion does not automatically cancel a Razorpay subscription or remove records retained by the payment provider. Users must separately cancel recurring payments.
+See the [Privacy Policy](https://github.com/princeofworld/PrinceHacker/blob/main/PRIVACY_POLICY.md). Account deletion removes the account and its associated FamilyGuard records. Direct UPI payments are one-time and do not create a recurring mandate. Records held independently by a UPI app or bank remain subject to that provider's retention practices.
 
 ## 8. Contact
 For installation, account, privacy or billing support, use https://github.com/princeofworld/PrinceHacker/issues. Never post credentials, payment secrets, OTPs or precise location details publicly.
