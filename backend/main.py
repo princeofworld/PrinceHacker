@@ -457,7 +457,7 @@ def submit_utr(payload:UtrSubmission,uid:str=Depends(current_uid)):
             raise HTTPException(409,"You already have a UTR awaiting review.")
         c.execute("INSERT INTO utr_payments(id,uid,utr,amount_paise,status,created) VALUES(?,?,?,?,?,?)",(payment_id,uid,payload.utr,99900,"pending",now))
         account=c.execute("SELECT email FROM users WHERE uid=?",(uid,)).fetchone()
-    telegram_notify("🟠 FamilyGuard: New UTR submitted\\nAmount: ₹999\\nUTR: "+payload.utr+"\\nAccount: "+(account["email"] if account else uid)+"\\nStatus: Pending manual bank verification")
+    telegram_notify("🟠 FamilyGuard: New UTR submitted\nAmount: ₹999\nUTR: "+payload.utr+"\nAccount: "+(account["email"] if account else uid)+"\nStatus: Pending manual bank verification")
     return {"submitted":True,"paymentId":payment_id,"status":"pending","message":"UTR submitted for manual bank-statement verification. Premium is not active yet."}
 
 @app.get("/payment/my-utr")
@@ -491,7 +491,7 @@ def admin_approve_utr(payment_id:str,payload:AdminReview,_:str=Depends(require_a
         c.execute("""INSERT INTO entitlements(uid,status,product_id,base_plan_id,token_hash,updated,expires_at) VALUES(?,?,?,?,?,?,?)
         ON CONFLICT(uid) DO UPDATE SET status='verified_active',product_id=excluded.product_id,base_plan_id=excluded.base_plan_id,token_hash=excluded.token_hash,updated=excluded.updated,expires_at=excluded.expires_at""",
         (row["uid"],"verified_active","familyguard_upi_manual_999","30-days","upi:"+row["utr"],now,expires))
-    telegram_notify("✅ FamilyGuard: UTR approved\\nAmount: ₹999\\nUTR: "+row["utr"]+"\\nAccount: "+row["email"]+"\\nPremium: Active for 30 days")
+    telegram_notify("✅ FamilyGuard: UTR approved\nAmount: ₹999\nUTR: "+row["utr"]+"\nAccount: "+row["email"]+"\nPremium: Active for 30 days")
     return {"approved":True,"message":"UPI payment approved. Premium enabled for 30 days."}
 
 @app.post("/admin/api/payments/{payment_id}/reject")
@@ -501,7 +501,7 @@ def admin_reject_utr(payment_id:str,payload:AdminReview,_:str=Depends(require_ad
         if not row: raise HTTPException(404,"Payment request not found")
         if row["status"]!="pending": raise HTTPException(409,"This request has already been reviewed")
         c.execute("UPDATE utr_payments SET status='rejected',reviewed=?,review_note=? WHERE id=?",(time.time(),payload.note or "Payment could not be verified",payment_id))
-    telegram_notify("❌ FamilyGuard: UTR rejected\\nUTR: "+row["utr"]+"\\nAccount: "+row["email"]+"\\nReason: "+(payload.note or "Payment could not be verified"))
+    telegram_notify("❌ FamilyGuard: UTR rejected\nUTR: "+row["utr"]+"\nAccount: "+row["email"]+"\nReason: "+(payload.note or "Payment could not be verified"))
     return {"rejected":True,"message":"UTR rejected. Premium was not granted."}
 
 @app.get("/app/latest-version")
