@@ -7,7 +7,7 @@ from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Optional
 from fastapi import FastAPI, Depends, Header, HTTPException, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, FileResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from urllib.parse import quote
 from fastapi.staticfiles import StaticFiles
@@ -694,10 +694,32 @@ def latest_app_version():
 @app.delete("/account-data")
 def delete_account_data(uid:str=Depends(current_uid)):
     with db() as c:
+        # Transfer each owned family to a remaining member, or remove an empty
+        # family, before the account's membership rows are cascaded away.
+        owned_families=c.execute("SELECT id FROM families WHERE owner_uid=?",(uid,)).fetchall()
+        for family in owned_families:
+            successor=c.execute(
+                "SELECT uid FROM members WHERE family_id=? AND uid<>? ORDER BY uid LIMIT 1",
+                (family["id"],uid),
+            ).fetchone()
+            if successor:
+                c.execute("UPDATE families SET owner_uid=? WHERE id=?",(successor["uid"],family["id"]))
+                c.execute("UPDATE members SET role='owner' WHERE family_id=? AND uid=?",(family["id"],successor["uid"]))
+            else:
+                c.execute("DELETE FROM families WHERE id=?",(family["id"],))
         c.execute("DELETE FROM users WHERE uid=?",(uid,))
-    return {"deleted":True,"billingManagedBy":"Razorpay (if configured)","note":"Cancel recurring payments through the FamilyGuard support channel or Razorpay mandate controls."}
+    return {"deleted":True,"billingManagedBy":"manual_upi","note":"Direct UPI payments are one-time and do not create recurring mandates."}
 @app.get("/api")
 def root(): return {"service":"FamilyGuard API","docs":"/docs","health":"/health"}
+
+
+@app.get("/PRIVACY_POLICY.md",include_in_schema=False)
+def privacy_policy_document():
+    return FileResponse(Path(__file__).resolve().parent.parent/"PRIVACY_POLICY.md",media_type="text/markdown")
+
+@app.get("/TERMS_OF_SERVICE.md",include_in_schema=False)
+def terms_document():
+    return FileResponse(Path(__file__).resolve().parent.parent/"TERMS_OF_SERVICE.md",media_type="text/markdown")
 
 
 # Serve the installable browser dashboard from the same origin as the API.
