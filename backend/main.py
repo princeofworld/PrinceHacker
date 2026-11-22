@@ -2,7 +2,7 @@
 Location sharing is opt-in, visible, time-limited and revocable.
 """
 from __future__ import annotations
-import os, sqlite3, hashlib, hmac, base64, json, secrets, time, urllib.request, urllib.error
+import os, sqlite3, hashlib, hmac, base64, json, secrets, time, urllib.request, urllib.error, re
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Optional
@@ -13,13 +13,38 @@ from urllib.parse import quote
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, SecretStr, EmailStr
 
+DATABASE_URL=os.getenv("DATABASE_URL","").strip()
+if DATABASE_URL.startswith("postgres://"):
+    DATABASE_URL="postgresql://"+DATABASE_URL[len("postgres://"):]
+if DATABASE_URL.startswith("postgresql://") and "sslmode=" not in DATABASE_URL:
+    DATABASE_URL += ("&" if "?" in DATABASE_URL else "?")+"sslmode=require"
+DB_KIND="postgresql" if DATABASE_URL.startswith("postgresql://") else "sqlite"
+if DB_KIND=="postgresql":
+    try:
+        import psycopg
+        from psycopg.rows import dict_row
+        from psycopg.errors import IntegrityError as PostgresIntegrityError
+        DB_INTEGRITY_ERRORS=(sqlite3.IntegrityError,PostgresIntegrityError)
+    except ImportError as exc:
+        raise RuntimeError("DATABASE_URL is set but psycopg is missing. Install backend/requirements.txt.") from exc
+else:
+    DB_INTEGRITY_ERRORS=(sqlite3.IntegrityError,)
+
 INVITE_TTL_MINUTES=max(5,min(60,int(os.getenv("INVITE_TTL_MINUTES","15"))))
 MAX_BODY_BYTES=16384
 DB_PATH=os.getenv("FAMILYGUARD_DB_PATH", str(Path(os.getenv("RENDER_DISK_PATH","/var/data"))/"familyguard.sqlite3"))
 if not os.getenv("RENDER_DISK_PATH") and not Path("/var/data").exists():
     DB_PATH=os.getenv("FAMILYGUARD_DB_PATH", str(Path(__file__).resolve().parent/"familyguard.sqlite3"))
-Path(DB_PATH).parent.mkdir(parents=True,exist_ok=True)
+if DB_KIND=="sqlite":
+    Path(DB_PATH).parent.mkdir(parents=True,exist_ok=True)
 app=FastAPI(title="FamilyGuard API",version="3.0.0")
+
+class RefreshIn(BaseModel):
+    refreshToken: str=Field(min_length=20,max_length=256)
+class SubscriptionVerify(BaseModel):
+    razorpay_payment_id: str=Field(min_length=1,max_length=128)
+    razorpay_subscription_id: str=Field(min_length=1,max_length=128)
+    razorpay_signature: str=Field(min_length=1,max_length=256)
 
 class AuthIn(BaseModel):
     email: EmailStr
@@ -40,10 +65,49 @@ class LocationUpdate(BaseModel):
     capturedAt: datetime
     familyId: str=Field(min_length=12,max_length=64)
 
-def db():
-    c=sqlite3.connect(DB_PATH,timeout=15); c.row_factory=sqlite3.Row
-    c.execute("PRAGMA foreign_keys=ON"); c.execute("PRAGMA journal_mode=WAL")
-    return c
+class DatabaseConnection:
+    """Small DB-API compatibility layer for the existing SQLite-style queries."""
+    def __init__(self):
+        self.is_postgres=(DB_KIND=="postgresql")
+        if self.is_postgres:
+            self.connection=psycopg.connect(DATABASE_URL,connect_timeout=10,row_factory=dict_row)
+        else:
+            self.connection=sqlite3.connect(DB_PATH,timeout=15)
+            self.connection.row_factory=sqlite3.Row
+            self.connection.execute("PRAGMA foreign_keys=ON")
+            self.connection.execute("PRAGMA journal_mode=WAL")
+    def __enter__(self): return self
+    def __exit__(self,exc_type,exc,tb):
+        try:
+            self.connection.rollback() if exc_type else self.connection.commit()
+        finally:
+            self.connection.close()
+        return False
+    def execute(self,sql,params=()):
+        if self.is_postgres:
+            if sql.lstrip().upper().startswith("PRAGMA"):
+                pragma=re.match(r"\\s*PRAGMA\\s+table_info\\(([^)]+)\\)",sql,re.I)
+                if pragma:
+                    return self.connection.execute("SELECT column_name AS name FROM information_schema.columns WHERE table_schema=current_schema() AND table_name=%s",(pragma.group(1).strip(),))
+                return self.connection.execute("SELECT 1 WHERE FALSE")
+            is_ignore=bool(re.search(r"\\bINSERT\\s+OR\\s+IGNORE\\s+INTO\\b",sql,re.I))
+            is_replace=bool(re.search(r"\\bINSERT\\s+OR\\s+REPLACE\\s+INTO\\s+payment_subscriptions\\b",sql,re.I))
+            sql=re.sub(r"\\bINSERT\\s+OR\\s+(?:IGNORE|REPLACE)\\s+INTO\\b","INSERT INTO",sql,flags=re.I)
+            if is_replace:
+                sql += " ON CONFLICT(subscription_id) DO UPDATE SET uid=EXCLUDED.uid,status=EXCLUDED.status,created=EXCLUDED.created,updated=EXCLUDED.updated"
+            elif is_ignore:
+                sql += " ON CONFLICT DO NOTHING"
+            sql=re.sub(r"ALTER TABLE (\\w+) ADD COLUMN (\\w+)",r"ALTER TABLE \\1 ADD COLUMN IF NOT EXISTS \\2",sql,flags=re.I)
+            sql=sql.replace("?","%s")
+        return self.connection.execute(sql,params)
+    def executescript(self,script):
+        if not self.is_postgres: return self.connection.executescript(script)
+        cursor=None
+        for statement in script.split(";"):
+            if statement.strip(): cursor=self.execute(statement)
+        return cursor
+
+def db(): return DatabaseConnection()
 def init_db():
     with db() as c:
         c.executescript("""
@@ -108,7 +172,7 @@ async def size_limit(request:Request,call_next):
     if length and int(length)>MAX_BODY_BYTES: return JSONResponse(status_code=413,content={"detail":"Request too large"})
     return await call_next(request)
 @app.get("/health")
-def health(): return {"status":"ok","service":"familyguard-api","auth":"sqlite-jwt","storage":"sqlite","locationSharing":"consent-gated"}
+def health(): return {"status":"ok","service":"familyguard-api","auth":"database-jwt","storage":DB_KIND,"locationSharing":"consent-gated"}
 def issue_auth_session(uid:str):
     now=time.time()
     refresh=secrets.token_urlsafe(48)
@@ -124,7 +188,7 @@ def register(payload:AuthIn):
     uid=secrets.token_urlsafe(18)
     try:
         with db() as c: c.execute("INSERT INTO users VALUES(?,?,?,?)",(uid,email,hash_password(payload.password.get_secret_value()),time.time()))
-    except sqlite3.IntegrityError: raise HTTPException(409,"An account with this email already exists")
+    except DB_INTEGRITY_ERRORS: raise HTTPException(409,"An account with this email already exists")
     return issue_auth_session(uid)
 
 @app.post("/auth/login")
@@ -182,7 +246,7 @@ def billing_status(uid:str=Depends(current_uid)):
     with db() as c:
         row=c.execute("SELECT status,updated,expires_at FROM entitlements WHERE uid=?",(uid,)).fetchone()
         sub=c.execute("SELECT subscription_id,status,updated FROM payment_subscriptions WHERE uid=? ORDER BY updated DESC LIMIT 1",(uid,)).fetchone()
-    active=premium_active(c,uid)
+        active=premium_active(c,uid)
     return {"plan":"premium" if active else "free","premium":active,"status":row["status"] if row else "free","subscriptionStatus":sub["status"] if sub else None,"updatedAt":row["updated"] if row else None,"expiresAt":row["expires_at"] if row else None}
 
 @app.post("/family/create")
@@ -201,7 +265,7 @@ def create_family(payload:FamilyCreate,uid:str=Depends(current_uid)):
                 c.execute("INSERT INTO invites(code,family_id,created_by,expires,used) VALUES(?,?,?,?,0)",(candidate,family_id,uid,now+INVITE_TTL_MINUTES*60))
                 code=candidate
                 break
-            except sqlite3.IntegrityError:
+            except DB_INTEGRITY_ERRORS:
                 continue
         if code is None: raise HTTPException(503,"Could not create a unique invite code. Please retry.")
     return {"familyId":family_id,"familyName":payload.displayName.strip(),"inviteCode":code,"expiresInSeconds":INVITE_TTL_MINUTES*60}
