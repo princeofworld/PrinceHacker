@@ -181,7 +181,7 @@ class MainActivity : ComponentActivity() {
                     AlertDialog(
                         onDismissRequest = { showDeleteDataDialog = false },
                         title = { Text("Delete FamilyGuard account?") },
-                        text = { Text("This permanently deletes your FamilyGuard account and associated server records, including family and payment-review records. This cannot be undone. Direct UPI payments do not create recurring mandates.") },
+                        text = { Text("This permanently deletes your account, device registrations, payment-review records and family membership. Any family you own will be transferred to a remaining member or deleted if empty. This cannot be undone. Direct UPI payments do not create recurring mandates.") },
                         confirmButton = {
                             TextButton(onClick = {
                                 showDeleteDataDialog = false
