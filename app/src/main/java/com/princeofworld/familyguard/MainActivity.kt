@@ -45,27 +45,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
-import com.android.billingclient.api.BillingClient
-import com.android.billingclient.api.BillingClientStateListener
-import com.android.billingclient.api.BillingFlowParams
-import com.android.billingclient.api.BillingResult
-import com.android.billingclient.api.ProductDetails
-import com.android.billingclient.api.Purchase
-import com.android.billingclient.api.QueryProductDetailsParams
-import com.android.billingclient.api.QueryPurchasesParams
-import com.android.billingclient.api.AcknowledgePurchaseParams
-import com.android.billingclient.api.PendingPurchasesParams
 import java.text.DateFormat
 import java.util.Date
-import java.net.HttpURLConnection
 import java.net.URL
-import java.io.OutputStreamWriter
 import java.util.concurrent.Executors
 import org.json.JSONObject
-
-private const val PREMIUM_PRODUCT_ID = "familyguard_premium_999_monthly"
-private const val PREMIUM_BASE_PLAN_ID = "monthly-999"
-private const val PLAY_PACKAGE_NAME = "com.princeofworld.familyguard"
 
 class MainActivity : ComponentActivity() {
     private var locationText by mutableStateOf("Location sharing is off. Choose Update location to request access.")
@@ -73,10 +57,9 @@ class MainActivity : ComponentActivity() {
     private var usageText by mutableStateOf("Usage report is available to Premium subscribers after enabling Usage Access.")
     private var premium by mutableStateOf(false)
     private var billingReady by mutableStateOf(false)
-    private var billingMessage by mutableStateOf("Connecting to Google Play…")
-    private var premiumPriceLabel by mutableStateOf("Monthly price shown by Google Play")
+    private var billingMessage by mutableStateOf("Sign in to check your FamilyGuard plan.")
+    private var premiumPriceLabel by mutableStateOf("₹999 / month")
     private val verificationExecutor = Executors.newSingleThreadExecutor()
-    private var productDetails: ProductDetails? = null
     private var notice by mutableStateOf<String?>(null)
     private var pendingDisclosure by mutableStateOf<String?>(null)
     private var permissionStatusText by mutableStateOf("Checking permissions…")
@@ -111,20 +94,13 @@ class MainActivity : ComponentActivity() {
         pendingDisclosure = null
     }
 
-    private val billingClient by lazy {
-        BillingClient.newBuilder(this)
-            .setListener { result, purchases -> handlePurchases(result, purchases.orEmpty()) }
-            .enablePendingPurchases(PendingPurchasesParams.newBuilder().enableOneTimeProducts().build())
-            .build()
-    }
-
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         consentAccepted = getSharedPreferences("familyguard_privacy", Context.MODE_PRIVATE)
             .getBoolean("parental_disclosure_accepted_v1", false)
         familyId = getSharedPreferences("familyguard_family", Context.MODE_PRIVATE).getString("familyId", "") ?: ""
         familyConsentEnabled = getSharedPreferences("familyguard_family", Context.MODE_PRIVATE).getBoolean("locationConsent", false)
-        connectBilling()
+        refreshSubscriptionStatus()
         setContent {
             MaterialTheme(colorScheme = darkColorScheme()) {
                 if (!consentAccepted) {
@@ -162,8 +138,8 @@ class MainActivity : ComponentActivity() {
                             Manifest.permission.ACCESS_COARSE_LOCATION
                         ))
                     },
-                    onUpgrade = { launchPremiumPurchase() },
-                    onRestore = { restorePurchases() },
+                    onUpgrade = { openPremiumCheckout() },
+                    onRestore = { refreshSubscriptionStatus() },
                     onUsage = { openUsageAccessSettings() },
                     onSos = { sendSosAlert() },
                     onNotice = { notice = it },
@@ -171,7 +147,8 @@ class MainActivity : ComponentActivity() {
                     onSetupPermissions = { beginPermissionSetup() },
                     onPrivacy = { openWebPage("https://raw.githubusercontent.com/princeofworld/PrinceHacker/main/PRIVACY_POLICY.md") },
                     onTerms = { openWebPage("https://raw.githubusercontent.com/princeofworld/PrinceHacker/main/TERMS_OF_SERVICE.md") },
-                    onDeleteData = { showDeleteDataDialog = true }
+                    onDeleteData = { showDeleteDataDialog = true },
+                    onCheckUpdate = { checkForAppUpdate() }
                 )
                 pendingDisclosure?.let { step ->
                     val disclosure = when (step) {
@@ -200,7 +177,7 @@ class MainActivity : ComponentActivity() {
                     AlertDialog(
                         onDismissRequest = { showDeleteDataDialog = false },
                         title = { Text("Delete FamilyGuard data?") },
-                        text = { Text("FamilyGuard account and family data are stored on the service. This local action clears app settings; use the account-data endpoint to request server data deletion. Google Play billing is managed separately.") },
+                        text = { Text("FamilyGuard account and family data are stored on the service. This local action clears app settings; use the account-data endpoint to request server data deletion. Recurring payment cancellation is managed through the payment provider.") },
                         confirmButton = {
                             TextButton(onClick = {
                                 getSharedPreferences("familyguard_privacy", Context.MODE_PRIVATE).edit().clear().apply()
@@ -228,12 +205,11 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         if (consentAccepted) refreshUsageReport()
-        if (billingReady) restorePurchases()
+        refreshSubscriptionStatus()
         updatePermissionStatus()
     }
 
     override fun onDestroy() {
-        billingClient.endConnection()
         verificationExecutor.shutdownNow()
         super.onDestroy()
     }
@@ -377,182 +353,62 @@ class MainActivity : ComponentActivity() {
         permissionStatusText = "Location: $location\nNotifications: $notifications\nUsage Access: $usage\nBackground location: Not requested (no background tracking)\nBattery exemption: Not requested (not needed)"
     }
 
-    private fun connectBilling() {
-        billingClient.startConnection(object : BillingClientStateListener {
-            override fun onBillingSetupFinished(result: BillingResult) {
-                billingReady = result.responseCode == BillingClient.BillingResponseCode.OK
-                billingMessage = if (billingReady) "Google Play Billing connected." else
-                    "Google Play Billing unavailable: ${result.debugMessage}"
-                if (billingReady) {
-                    queryPremiumProduct()
-                    restorePurchases()
-                }
-            }
-            override fun onBillingServiceDisconnected() {
-                billingReady = false
-                billingMessage = "Google Play connection interrupted. Try again shortly."
-            }
-        })
+    private fun openPremiumCheckout() {
+        billingMessage = "Open the official website, sign in with this same account and complete the ₹999/month checkout."
+        openWebPage("https://princehacker.onrender.com/#pricing")
     }
 
-    private fun queryPremiumProduct() {
-        val product = QueryProductDetailsParams.Product.newBuilder()
-            .setProductId(PREMIUM_PRODUCT_ID)
-            .setProductType(BillingClient.ProductType.SUBS)
-            .build()
-        val params = QueryProductDetailsParams.newBuilder().setProductList(listOf(product)).build()
-        billingClient.queryProductDetailsAsync(params) { result, details ->
-            if (result.responseCode == BillingClient.BillingResponseCode.OK) {
-                productDetails = details.productDetailsList.firstOrNull()
-                val monthlyOffer = productDetails?.subscriptionOfferDetails?.firstOrNull { it.basePlanId == PREMIUM_BASE_PLAN_ID }
-                val recurringPhase = monthlyOffer?.pricingPhases?.pricingPhaseList?.lastOrNull()
-                premiumPriceLabel = if (recurringPhase?.billingPeriod == "P1M") "${recurringPhase.formattedPrice} / month" else "Monthly price shown at Google Play checkout"
-                billingMessage = when {
-                    productDetails == null -> "Subscription product not found. Configure the product in Play Console."
-                    monthlyOffer == null -> "Product found, but base plan $PREMIUM_BASE_PLAN_ID is unavailable in Play Console."
-                    recurringPhase?.billingPeriod != "P1M" -> "Base plan $PREMIUM_BASE_PLAN_ID must use a one-month billing period."
-                    else -> "Google Play monthly offer available: ${recurringPhase.formattedPrice}."
-                }
-            } else billingMessage = "Could not load subscription: ${result.debugMessage}"
-        }
-    }
-
-    private fun launchPremiumPurchase() {
-        if (!billingReady) {
-            notice = "Google Play Billing is not connected. Install this app from a Play testing track and try again."
-            return
-        }
-        val details = productDetails
-        if (details == null) {
-            queryPremiumProduct()
-            notice = "The subscription is not available yet. Confirm that $PREMIUM_PRODUCT_ID is active in Play Console."
-            return
-        }
-        val offer = details.subscriptionOfferDetails?.firstOrNull { it.basePlanId == PREMIUM_BASE_PLAN_ID }
-        val offerToken = offer?.offerToken
-        if (offerToken == null || offer?.pricingPhases?.pricingPhaseList?.lastOrNull()?.billingPeriod != "P1M") {
-            notice = "The monthly-999 base plan is not available or is not configured for a one-month billing period. Configure product $PREMIUM_PRODUCT_ID with base plan $PREMIUM_BASE_PLAN_ID in Play Console."
-            return
-        }
-        val productParams = BillingFlowParams.ProductDetailsParams.newBuilder()
-            .setProductDetails(details)
-            .setOfferToken(offerToken)
-            .build()
-        val params = BillingFlowParams.newBuilder()
-            .setProductDetailsParamsList(listOf(productParams))
-            .build()
-        val result = billingClient.launchBillingFlow(this, params)
-        if (result.responseCode != BillingClient.BillingResponseCode.OK) {
-            notice = "Google Play could not start checkout: ${result.debugMessage}"
-        }
-    }
-
-    private fun restorePurchases() {
-        if (!billingReady) return
-        val params = QueryPurchasesParams.newBuilder()
-            .setProductType(BillingClient.ProductType.SUBS)
-            .build()
-        billingClient.queryPurchasesAsync(params) { result, purchases ->
-            if (result.responseCode == BillingClient.BillingResponseCode.OK) {
-                handlePurchases(result, purchases)
-            } else billingMessage = "Restore failed: ${result.debugMessage}"
-        }
-    }
-
-    private fun handlePurchases(result: BillingResult, purchases: List<Purchase>) {
-        if (result.responseCode != BillingClient.BillingResponseCode.OK) {
-            premium = false
-            billingMessage = "Purchase update: ${result.debugMessage}"
-            return
-        }
-        val matching = purchases.filter { it.products.contains(PREMIUM_PRODUCT_ID) }
-        val purchased = matching.filter { it.purchaseState == Purchase.PurchaseState.PURCHASED }
-        val pending = matching.any { it.purchaseState == Purchase.PurchaseState.PENDING }
-
-        if (pending) {
-            premium = false
-            billingMessage = "Purchase pending. Premium stays unavailable until Google Play completes payment."
-            return
-        }
-
-        if (purchased.isEmpty()) {
-            premium = false
-            billingMessage = "No active Premium purchase found for this Google Play account."
-            refreshUsageReport()
-            return
-        }
-        val unacknowledged = purchased.filter { !it.isAcknowledged }
-        if (unacknowledged.isNotEmpty()) {
-            premium = false
-            billingMessage = "Purchase received. Acknowledging with Google Play before server verification."
-            unacknowledged.forEach { purchase ->
-                billingClient.acknowledgePurchase(
-                    AcknowledgePurchaseParams.newBuilder().setPurchaseToken(purchase.purchaseToken).build()
-                ) { ack ->
-                    if (ack.responseCode == BillingClient.BillingResponseCode.OK) {
-                        verifyPurchaseWithServer(purchase.purchaseToken)
-                    } else {
-                        premium = false
-                        billingMessage = "Purchase acknowledgement failed: ${ack.debugMessage}"
-                    }
-                }
-            }
-        } else {
-            verifyPurchaseWithServer(purchased.first().purchaseToken)
-        }
-    }
-
-    private fun verifyPurchaseWithServer(purchaseToken: String) {
-        val endpoint = BuildConfig.FAMILYGUARD_VERIFY_URL.trim()
-        if (endpoint.isBlank()) {
-            premium = false
-            billingMessage = "Server verification is not configured. Premium remains locked until a verification URL is set."
-            refreshUsageReport()
-            return
-        }
-        premium = false
-        billingMessage = "Verifying subscription securely with Google Play…"
+    private fun refreshSubscriptionStatus() {
         verificationExecutor.execute {
-            var connection: HttpURLConnection? = null
             try {
-                connection = (URL(endpoint.trimEnd('/') + "/verify-subscription").openConnection() as HttpURLConnection).apply {
-                    requestMethod = "POST"
-                    connectTimeout = 10000
-                    readTimeout = 12000
-                    doOutput = true
-                    setRequestProperty("Content-Type", "application/json")
-                    setRequestProperty("Authorization", "Bearer " + FamilyGuardApi.refreshIdToken(this@MainActivity))
-                }
-                val body = JSONObject()
-                    .put("packageName", PLAY_PACKAGE_NAME)
-                    .put("productId", PREMIUM_PRODUCT_ID)
-                    .put("basePlanId", PREMIUM_BASE_PLAN_ID)
-                    .put("purchaseToken", purchaseToken)
-                OutputStreamWriter(connection.outputStream, Charsets.UTF_8).use { it.write(body.toString()) }
-                val code = connection.responseCode
-                val stream = if (code in 200..299) connection.inputStream else connection.errorStream
-                val responseText = stream?.bufferedReader()?.use { it.readText() }.orEmpty()
-                val response = JSONObject(responseText)
-                val verifiedActive = code in 200..299 &&
-                    response.optBoolean("verified", false) &&
-                    response.optBoolean("active", false) &&
-                    response.optString("productId") == PREMIUM_PRODUCT_ID &&
-                    response.optString("basePlanId") == PREMIUM_BASE_PLAN_ID
+                val status = FamilyGuardApi.get(this, "/billing/status")
+                val active = status.optBoolean("premium", false)
                 runOnUiThread {
-                    premium = verifiedActive
-                    billingMessage = if (verifiedActive) {
-                        "Premium subscription verified by the FamilyGuard server and Google Play."
-                    } else {
-                        "Server did not confirm an active subscription. Premium remains locked."
-                    }
+                    premium = active
+                    billingReady = true
+                    billingMessage = if (active) "Razorpay subscription is active." else
+                        "Free plan. Premium activates only after server-verified payment."
                     refreshUsageReport()
+                    updatePermissionStatus()
                 }
-            } catch (_: Exception) {
+            } catch (e: Exception) {
                 runOnUiThread {
                     premium = false
-                    billingMessage = "Server verification unavailable. Premium remains locked; try Restore later."
+                    billingReady = false
+                    billingMessage = e.message ?: "Sign in to refresh plan status."
                     refreshUsageReport()
+                    updatePermissionStatus()
                 }
+            }
+        }
+    }
+
+    private fun checkForAppUpdate() {
+        verificationExecutor.execute {
+            var connection: java.net.HttpURLConnection? = null
+            try {
+                connection = (java.net.URL("https://princehacker.onrender.com/app/latest-version").openConnection() as java.net.HttpURLConnection).apply {
+                    requestMethod = "GET"
+                    connectTimeout = 10000
+                    readTimeout = 12000
+                    setRequestProperty("Accept", "application/json")
+                }
+                val code = connection.responseCode
+                require(code in 200..299) { "Update service is temporarily unavailable." }
+                val versionData = JSONObject(connection.inputStream.bufferedReader().use { it.readText() })
+                val latestCode = versionData.optLong("versionCode", 0L)
+                val currentCode = packageManager.getPackageInfo(packageName, 0).longVersionCode
+                val apkUrl = versionData.optString("apkUrl", "")
+                runOnUiThread {
+                    if (latestCode > currentCode && apkUrl.startsWith("https://")) {
+                        notice = "FamilyGuard update " + versionData.optString("versionName") + " is available. The official APK will open in your browser. Review Android's installer prompt before updating."
+                        openWebPage(apkUrl)
+                    } else {
+                        notice = "FamilyGuard is up to date. Current version: " + packageManager.getPackageInfo(packageName, 0).versionName + "."
+                    }
+                }
+            } catch (e: Exception) {
+                runOnUiThread { notice = e.message ?: "Could not check for updates. Try again later." }
             } finally {
                 connection?.disconnect()
             }
@@ -572,7 +428,7 @@ class MainActivity : ComponentActivity() {
 
     private fun openUsageAccessSettings() {
         if (!premium) {
-            notice = "App Usage & Screen Time reports are a Premium feature. Subscribe through Google Play first."
+            notice = "App Usage & Screen Time reports are a Premium feature. Subscribe through the official FamilyGuard website first."
             return
         }
         usageSettingsLauncher.launch(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS))
@@ -724,7 +580,8 @@ private fun FamilyGuardDashboard(
     onSetupPermissions: () -> Unit,
     onPrivacy: () -> Unit,
     onTerms: () -> Unit,
-    onDeleteData: () -> Unit
+    onDeleteData: () -> Unit,
+    onCheckUpdate: () -> Unit
 ) {
     Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
         Column(
@@ -745,10 +602,10 @@ private fun FamilyGuardDashboard(
                         Text("Upgrade • $premiumPriceLabel")
                     }
                     OutlinedButton(onClick = onRestore, modifier = Modifier.fillMaxWidth()) {
-                        Text("Restore purchases")
+                        Text("Refresh plan status")
                     }
                     Text(billingMessage, style = MaterialTheme.typography.bodySmall)
-                    Text(if (billingReady) "Play Billing connected" else "Play Billing not connected", style = MaterialTheme.typography.labelSmall)
+                    Text(if (billingReady) "Play Billing connected" else "Website checkout", style = MaterialTheme.typography.labelSmall)
                 }
             }
             DashboardCard("Live Location", locationText) {
@@ -772,7 +629,7 @@ private fun FamilyGuardDashboard(
                 Button(onClick = onSetupPermissions, modifier = Modifier.fillMaxWidth()) { Text("One-Click Setup All Permissions") }
                 OutlinedButton(onClick = onSetupPermissions, modifier = Modifier.fillMaxWidth()) { Text("Retry Missing Permissions") }
             }
-            DashboardCard("About & Settings", "Review the policies or clear local FamilyGuard settings. This version does not create a cloud account.") {
+            DashboardCard("About & Settings", "Review the policies or clear local FamilyGuard settings. Your FamilyGuard account is shared with the official website dashboard.") {
                 OutlinedButton(onClick = onPrivacy, modifier = Modifier.fillMaxWidth()) { Text("Privacy Policy") }
                 OutlinedButton(onClick = onTerms, modifier = Modifier.fillMaxWidth()) { Text("Terms of Service") }
                 OutlinedButton(onClick = onDeleteData, modifier = Modifier.fillMaxWidth()) { Text("Delete Local App Data") }
