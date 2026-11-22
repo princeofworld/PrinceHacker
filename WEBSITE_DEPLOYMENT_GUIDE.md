@@ -51,3 +51,9 @@ Configure these values in Render Dashboard → FamilyGuard service → Environme
 - `ADMIN_PANEL_PASSWORD` — a unique password of at least 16 characters. Keep it private; do not share it in chat or commit it.
 
 After redeploy, open `https://princehacker.onrender.com/admin/` in a mobile browser and sign in. The page is only an interface; all payment-list and approve/reject endpoints require HTTP Basic authentication over HTTPS. Compare the exact 12-digit UTR and ₹999 incoming credit in your bank's official app/statement before clicking Approve. Approval grants 30 days and the expiry is enforced by the backend. Direct UPI is one-time and does not auto-renew. The app deliberately does not ingest forwarded bank SMS or auto-approve from SMS content. Do not forward full bank messages because they may expose unrelated account information.
+
+
+## Backup, recovery and production checks
+Configure `BACKUP_ENCRYPTION_KEY` in Render Environment as a random 32-byte hexadecimal secret (64 characters). Do not store it in GitHub or beside exported backups. The Admin page offers a protected **Download encrypted backup** action. Backups are manual encrypted snapshots; download them regularly and retain copies separately. To restore, use the same key and the documented `backend/backup_restore.py restore <backup-file> --confirm-overwrite` command against a staging database first. Restore overwrites the target database.
+
+Set `DATABASE_URL` to a managed PostgreSQL connection for durable production data, or attach a persistent disk and set `FAMILYGUARD_DB_PATH` to its mount path. Render's free ephemeral filesystem is not a durable database. Verify provider-side database backups and perform a restore drill before production launch. The `/health` response reports whether encrypted backup configuration is present and warns when SQLite appears to use a local path.
