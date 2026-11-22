@@ -24,3 +24,11 @@ SQLite uses `FAMILYGUARD_DB_PATH` when configured; otherwise it uses `/var/data/
 JWT uses HMAC-SHA256. Location sharing is visible, foreground-only, explicitly enabled and revocable. HTTPS is required. This is not end-to-end encryption. Configure persistent storage, backups, rate limiting and complete a security review before public launch.
 
 No Firebase or API key secrets are needed. Google Play service-account credentials are only required to validate actual purchases; without them purchases stay pending and Premium family creation remains locked.
+
+
+## Encrypted backup and recovery
+- Configure `BACKUP_ENCRYPTION_KEY` in Render Environment as a random 32-byte key encoded as exactly 64 hexadecimal characters. Keep it in a password manager or separate secrets vault; never commit it or store it beside a backup.
+- Sign in to `/admin/` and use **Download encrypted backup**. The endpoint requires the configured Admin Basic Auth and returns an AES-256-GCM authenticated encrypted snapshot containing all account, family, device, entitlement, UTR-review and session tables.
+- Backups are manual downloads, not automatic scheduled snapshots. Download on a regular schedule and keep encrypted copies in a separate secure location.
+- Recovery requires the same `BACKUP_ENCRYPTION_KEY` and database connection. Run `python backup_restore.py restore /path/to/file.fgbk --confirm-overwrite` from the backend directory (or run the module from the repository root). Restore replaces all records in the selected database. Test recovery against a separate staging database first.
+- For SQLite, mount persistent storage and set `FAMILYGUARD_DB_PATH` to that mounted path. For PostgreSQL, configure `DATABASE_URL` to a managed database with its own provider backups. The health endpoint reports storage and backup-configuration warnings; a green application health check alone is not proof of backup recoverability.
