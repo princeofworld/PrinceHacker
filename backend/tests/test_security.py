@@ -5,7 +5,12 @@ same suite against a disposable PostgreSQL test database.
 """
 import importlib
 import os
+import sys
 import uuid
+from pathlib import Path
+
+# Ensure the repository root is importable when pytest selects this nested file.
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 import pytest
 from fastapi.testclient import TestClient
