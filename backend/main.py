@@ -268,6 +268,31 @@ def billing_status(uid:str=Depends(current_uid)):
         paid=bool(row and row["status"]=="verified_active" and (row["expires_at"] is None or row["expires_at"]>time.time()))
     return {"plan":"premium" if paid else ("trial" if trial["active"] else "free"),"premium":active,"trial":trial,"status":row["status"] if row else ("trial" if trial["active"] else "free"),"subscriptionStatus":sub["status"] if sub else None,"updatedAt":row["updated"] if row else None,"expiresAt":row["expires_at"] if row else None}
 
+@app.get("/account/profile")
+def account_profile(uid:str=Depends(current_uid)):
+    with db() as c:
+        user=c.execute("SELECT uid,email,created FROM users WHERE uid=?",(uid,)).fetchone()
+        if not user: raise HTTPException(404,"Account not found")
+        entitlement=c.execute("SELECT status,expires_at,updated FROM entitlements WHERE uid=?",(uid,)).fetchone()
+        active=premium_active(c,uid)
+        trial=trial_status(c,uid)
+    paid=bool(entitlement and entitlement["status"]=="verified_active" and (entitlement["expires_at"] is None or entitlement["expires_at"]>time.time()))
+    return {"uid":uid,"email":user["email"],"createdAt":user["created"],"plan":"premium" if paid else ("trial" if trial["active"] else "free"),"premium":active,"trial":trial,"entitlementStatus":entitlement["status"] if entitlement else "free","expiresAt":entitlement["expires_at"] if entitlement else None}
+
+@app.get("/family/mine")
+def my_families(uid:str=Depends(current_uid)):
+    with db() as c:
+        rows=c.execute("""SELECT f.id,f.name,f.owner_uid,f.created,m.role,m.consent
+        FROM families f JOIN members m ON m.family_id=f.id
+        WHERE m.uid=? ORDER BY f.created DESC""",(uid,)).fetchall()
+        result=[]
+        for family in rows:
+            members=c.execute("""SELECT m.uid,u.email,m.role,m.consent,m.consent_at
+            FROM members m JOIN users u ON u.uid=m.uid
+            WHERE m.family_id=? ORDER BY CASE WHEN m.role='owner' THEN 0 ELSE 1 END,u.email""",(family["id"],)).fetchall()
+            result.append({"familyId":family["id"],"name":family["name"],"ownerUid":family["owner_uid"],"createdAt":family["created"],"myRole":family["role"],"members":[{"uid":m["uid"],"email":m["email"],"role":m["role"],"locationConsent":bool(m["consent"]),"consentAt":m["consent_at"]} for m in members]})
+    return {"families":result}
+
 @app.post("/family/create")
 def create_family(payload:FamilyCreate,uid:str=Depends(current_uid)):
     now=time.time()
