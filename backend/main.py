@@ -8,6 +8,8 @@ from pathlib import Path
 from typing import Optional
 from fastapi import FastAPI, Depends, Header, HTTPException, Request
 from fastapi.responses import JSONResponse
+from fastapi.security import HTTPBasic, HTTPBasicCredentials
+from urllib.parse import quote
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, SecretStr, EmailStr
 
@@ -56,9 +58,12 @@ def init_db():
         CREATE TABLE IF NOT EXISTS entitlements(uid TEXT PRIMARY KEY,status TEXT NOT NULL,product_id TEXT,base_plan_id TEXT,token_hash TEXT,updated REAL NOT NULL,FOREIGN KEY(uid) REFERENCES users(uid) ON DELETE CASCADE);
         CREATE TABLE IF NOT EXISTS app_meta(k TEXT PRIMARY KEY,v TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS payment_subscriptions(subscription_id TEXT PRIMARY KEY,uid TEXT NOT NULL,status TEXT NOT NULL,created REAL NOT NULL,updated REAL NOT NULL,FOREIGN KEY(uid) REFERENCES users(uid) ON DELETE CASCADE);
+        CREATE TABLE IF NOT EXISTS utr_payments(id TEXT PRIMARY KEY,uid TEXT NOT NULL,utr TEXT NOT NULL UNIQUE,amount_paise INTEGER NOT NULL,status TEXT NOT NULL,created REAL NOT NULL,reviewed REAL,review_note TEXT,FOREIGN KEY(uid) REFERENCES users(uid) ON DELETE CASCADE);
         """)
         columns={r["name"] for r in c.execute("PRAGMA table_info(locations)").fetchall()}
         if "battery" not in columns: c.execute("ALTER TABLE locations ADD COLUMN battery INTEGER")
+        entitlement_columns={r["name"] for r in c.execute("PRAGMA table_info(entitlements)").fetchall()}
+        if "expires_at" not in entitlement_columns: c.execute("ALTER TABLE entitlements ADD COLUMN expires_at REAL")
         row=c.execute("SELECT v FROM app_meta WHERE k='jwt_secret'").fetchone()
         if not row: c.execute("INSERT INTO app_meta VALUES('jwt_secret',?)",(secrets.token_urlsafe(48),))
 init_db()
@@ -96,8 +101,8 @@ def membership(c,uid,fid):
     if not row: raise HTTPException(403,"You are not a member of this family")
     return row
 def premium_active(c,uid):
-    row=c.execute("SELECT status FROM entitlements WHERE uid=?",(uid,)).fetchone()
-    return bool(row and row["status"]=="verified_active")
+    row=c.execute("SELECT status,expires_at FROM entitlements WHERE uid=?",(uid,)).fetchone()
+    return bool(row and row["status"]=="verified_active" and (row["expires_at"] is None or row["expires_at"]>time.time()))
 
 @app.middleware("http")
 async def size_limit(request:Request,call_next):
@@ -147,7 +152,7 @@ def billing_status(uid:str=Depends(current_uid)):
     with db() as c:
         row=c.execute("SELECT status,updated FROM entitlements WHERE uid=?",(uid,)).fetchone()
         sub=c.execute("SELECT subscription_id,status,updated FROM payment_subscriptions WHERE uid=? ORDER BY updated DESC LIMIT 1",(uid,)).fetchone()
-    active=bool(row and row["status"]=="verified_active")
+    active=premium_active(c,uid)
     return {"plan":"premium" if active else "free","premium":active,"status":row["status"] if row else "free","subscriptionStatus":sub["status"] if sub else None,"updatedAt":row["updated"] if row else None}
 
 @app.post("/payment/create-order")
@@ -224,6 +229,84 @@ async def payment_webhook(request:Request):
             else:
                 c.execute("UPDATE entitlements SET status='inactive',updated=? WHERE uid=? AND token_hash=?",(now,uid,sub_id))
     return {"received":True}
+
+
+class UtrSubmission(BaseModel):
+    utr: str=Field(pattern=r"^\d{12}$")
+
+admin_basic=HTTPBasic(auto_error=False)
+
+def require_admin(credentials: HTTPBasicCredentials|None=Depends(admin_basic)):
+    username=os.getenv("ADMIN_PANEL_USERNAME","").strip()
+    password=os.getenv("ADMIN_PANEL_PASSWORD","")
+    if len(password)<16 or not username:
+        raise HTTPException(503,"Admin panel is not configured. Set ADMIN_PANEL_USERNAME and a 16+ character ADMIN_PANEL_PASSWORD on the hosting dashboard.")
+    if credentials is None or not hmac.compare_digest(credentials.username,username) or not hmac.compare_digest(credentials.password,password):
+        raise HTTPException(401,"Admin sign-in required",headers={"WWW-Authenticate":"Basic"})
+    return username
+
+@app.get("/payment/upi-config")
+def upi_payment_config():
+    upi_id=os.getenv("ADMIN_UPI_ID","").strip()
+    if not upi_id or "@" not in upi_id:
+        return {"enabled":False,"amount":99900,"currency":"INR","message":"UPI payment is not configured. No payment should be sent."}
+    payee=os.getenv("ADMIN_UPI_NAME","FamilyGuard").strip()[:60]
+    uri="upi://pay?pa="+quote(upi_id,safe="@._-")+"&pn="+quote(payee,safe="")+"&am=999.00&cu=INR&tn="+quote("FamilyGuard Premium 30 days",safe="")
+    return {"enabled":True,"upiId":upi_id,"payeeName":payee,"amount":99900,"currency":"INR","upiUri":uri,"mode":"manual_review"}
+
+@app.post("/payment/submit-utr")
+def submit_utr(payload:UtrSubmission,uid:str=Depends(current_uid)):
+    now=time.time()
+    payment_id=secrets.token_urlsafe(18)
+    with db() as c:
+        if c.execute("SELECT 1 FROM utr_payments WHERE utr=?",(payload.utr,)).fetchone():
+            raise HTTPException(409,"This UTR has already been submitted.")
+        if c.execute("SELECT 1 FROM utr_payments WHERE uid=? AND status='pending' LIMIT 1",(uid,)).fetchone():
+            raise HTTPException(409,"You already have a UTR awaiting review.")
+        c.execute("INSERT INTO utr_payments(id,uid,utr,amount_paise,status,created) VALUES(?,?,?,?,?,?)",(payment_id,uid,payload.utr,99900,"pending",now))
+    return {"submitted":True,"paymentId":payment_id,"status":"pending","message":"UTR submitted for manual bank-statement verification. Premium is not active yet."}
+
+@app.get("/payment/my-utr")
+def my_utr(uid:str=Depends(current_uid)):
+    with db() as c:
+        rows=c.execute("SELECT id,utr,amount_paise,status,created,reviewed,review_note FROM utr_payments WHERE uid=? ORDER BY created DESC LIMIT 10",(uid,)).fetchall()
+    return {"payments":[dict(r) for r in rows]}
+
+@app.get("/admin/api/payments")
+def admin_list_payments(status:str="pending",_:str=Depends(require_admin)):
+    if status not in ("pending","approved","rejected","all"): raise HTTPException(400,"Invalid payment status")
+    with db() as c:
+        query="SELECT p.id,p.uid,u.email,p.utr,p.amount_paise,p.status,p.created,p.reviewed,p.review_note FROM utr_payments p JOIN users u ON u.uid=p.uid"
+        if status!="all": query+=" WHERE p.status=?"
+        query+=" ORDER BY p.created DESC LIMIT 200"
+        rows=c.execute(query,() if status=="all" else (status,)).fetchall()
+    return {"payments":[dict(r) for r in rows]}
+
+class AdminReview(BaseModel):
+    note: str=Field(default="",max_length=240)
+
+@app.post("/admin/api/payments/{payment_id}/approve")
+def admin_approve_utr(payment_id:str,payload:AdminReview,_:str=Depends(require_admin)):
+    now=time.time()
+    with db() as c:
+        row=c.execute("SELECT * FROM utr_payments WHERE id=?",(payment_id,)).fetchone()
+        if not row: raise HTTPException(404,"Payment request not found")
+        if row["status"]!="pending": raise HTTPException(409,"This request has already been reviewed")
+        c.execute("UPDATE utr_payments SET status='approved',reviewed=?,review_note=? WHERE id=?",(now,payload.note or "Verified against bank statement",payment_id))
+        expires=now+30*24*60*60
+        c.execute("""INSERT INTO entitlements(uid,status,product_id,base_plan_id,token_hash,updated,expires_at) VALUES(?,?,?,?,?,?,?)
+        ON CONFLICT(uid) DO UPDATE SET status='verified_active',product_id=excluded.product_id,base_plan_id=excluded.base_plan_id,token_hash=excluded.token_hash,updated=excluded.updated,expires_at=excluded.expires_at""",
+        (row["uid"],"verified_active","familyguard_upi_manual_999","30-days","upi:"+row["utr"],now,expires))
+    return {"approved":True,"message":"UPI payment approved. Premium enabled for 30 days."}
+
+@app.post("/admin/api/payments/{payment_id}/reject")
+def admin_reject_utr(payment_id:str,payload:AdminReview,_:str=Depends(require_admin)):
+    with db() as c:
+        row=c.execute("SELECT status FROM utr_payments WHERE id=?",(payment_id,)).fetchone()
+        if not row: raise HTTPException(404,"Payment request not found")
+        if row["status"]!="pending": raise HTTPException(409,"This request has already been reviewed")
+        c.execute("UPDATE utr_payments SET status='rejected',reviewed=?,review_note=? WHERE id=?",(time.time(),payload.note or "Payment could not be verified",payment_id))
+    return {"rejected":True,"message":"UTR rejected. Premium was not granted."}
 
 @app.get("/app/latest-version")
 def latest_app_version():
