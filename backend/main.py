@@ -37,6 +37,7 @@ class LocationUpdate(BaseModel):
     latitude: float=Field(ge=-90,le=90)
     longitude: float=Field(ge=-180,le=180)
     accuracyMeters: Optional[float]=Field(default=None,ge=0,le=100000)
+    batteryPercent: Optional[int]=Field(default=None,ge=0,le=100)
     capturedAt: datetime
 class VerifyRequest(BaseModel):
     packageName: str
@@ -55,10 +56,12 @@ def init_db():
         CREATE TABLE IF NOT EXISTS families(id TEXT PRIMARY KEY,name TEXT NOT NULL,owner_uid TEXT NOT NULL,created REAL NOT NULL);
         CREATE TABLE IF NOT EXISTS members(family_id TEXT NOT NULL,uid TEXT NOT NULL,role TEXT NOT NULL,consent INTEGER NOT NULL DEFAULT 0,consent_version TEXT,consent_at REAL,PRIMARY KEY(family_id,uid),FOREIGN KEY(family_id) REFERENCES families(id) ON DELETE CASCADE,FOREIGN KEY(uid) REFERENCES users(uid) ON DELETE CASCADE);
         CREATE TABLE IF NOT EXISTS invites(code TEXT PRIMARY KEY,family_id TEXT NOT NULL,created_by TEXT NOT NULL,expires REAL NOT NULL,used INTEGER NOT NULL DEFAULT 0);
-        CREATE TABLE IF NOT EXISTS locations(family_id TEXT NOT NULL,uid TEXT NOT NULL,lat REAL NOT NULL,lon REAL NOT NULL,accuracy REAL,captured REAL NOT NULL,PRIMARY KEY(family_id,uid),FOREIGN KEY(family_id,uid) REFERENCES members(family_id,uid) ON DELETE CASCADE);
+        CREATE TABLE IF NOT EXISTS locations(family_id TEXT NOT NULL,uid TEXT NOT NULL,lat REAL NOT NULL,lon REAL NOT NULL,accuracy REAL,captured REAL NOT NULL,battery INTEGER,PRIMARY KEY(family_id,uid),FOREIGN KEY(family_id,uid) REFERENCES members(family_id,uid) ON DELETE CASCADE);
         CREATE TABLE IF NOT EXISTS entitlements(uid TEXT PRIMARY KEY,status TEXT NOT NULL,product_id TEXT,base_plan_id TEXT,token_hash TEXT,updated REAL NOT NULL,FOREIGN KEY(uid) REFERENCES users(uid) ON DELETE CASCADE);
         CREATE TABLE IF NOT EXISTS app_meta(k TEXT PRIMARY KEY,v TEXT NOT NULL);
         """)
+        columns={r["name"] for r in c.execute("PRAGMA table_info(locations)").fetchall()}
+        if "battery" not in columns: c.execute("ALTER TABLE locations ADD COLUMN battery INTEGER")
         row=c.execute("SELECT v FROM app_meta WHERE k='jwt_secret'").fetchone()
         if not row: c.execute("INSERT INTO app_meta VALUES('jwt_secret',?)",(secrets.token_urlsafe(48),))
 init_db()
@@ -175,16 +178,16 @@ def location_update(payload:LocationUpdate,uid:str=Depends(current_uid)):
         families=c.execute("SELECT family_id FROM members WHERE uid=? AND consent=1",(uid,)).fetchall()
         if not families: raise HTTPException(403,"Join a family and explicitly enable location consent first")
         for row in families:
-            c.execute("""INSERT INTO locations VALUES(?,?,?,?,?,?) ON CONFLICT(family_id,uid) DO UPDATE SET lat=excluded.lat,lon=excluded.lon,accuracy=excluded.accuracy,captured=excluded.captured""",
-            (row["family_id"],uid,payload.latitude,payload.longitude,payload.accuracyMeters,stamp))
+            c.execute("""INSERT INTO locations(family_id,uid,lat,lon,accuracy,captured,battery) VALUES(?,?,?,?,?,?,?) ON CONFLICT(family_id,uid) DO UPDATE SET lat=excluded.lat,lon=excluded.lon,accuracy=excluded.accuracy,captured=excluded.captured,battery=excluded.battery""",
+            (row["family_id"],uid,payload.latitude,payload.longitude,payload.accuracyMeters,stamp,payload.batteryPercent))
     return {"updated":True,"familyCount":len(families),"capturedAt":captured.isoformat()}
 @app.get("/location/family")
 def location_family(familyId:str,uid:str=Depends(current_uid)):
     with db() as c:
         viewer=membership(c,uid,familyId)
         if not viewer["consent"]: raise HTTPException(403,"Enable your own location-sharing consent to view family locations")
-        rows=c.execute("""SELECT l.uid,l.lat,l.lon,l.accuracy,l.captured FROM locations l JOIN members m ON m.family_id=l.family_id AND m.uid=l.uid WHERE l.family_id=? AND m.consent=1 AND l.captured>=?""",(familyId,time.time()-600)).fetchall()
-    return {"familyId":familyId,"locations":[{"uid":r["uid"],"latitude":r["lat"],"longitude":r["lon"],"accuracyMeters":r["accuracy"],"capturedAt":datetime.fromtimestamp(r["captured"],timezone.utc).isoformat()} for r in rows]}
+        rows=c.execute("""SELECT l.uid,l.lat,l.lon,l.accuracy,l.captured,l.battery FROM locations l JOIN members m ON m.family_id=l.family_id AND m.uid=l.uid WHERE l.family_id=? AND m.consent=1 AND l.captured>=?""",(familyId,time.time()-600)).fetchall()
+    return {"familyId":familyId,"locations":[{"uid":r["uid"],"latitude":r["lat"],"longitude":r["lon"],"accuracyMeters":r["accuracy"],"batteryPercent":r["battery"],"isOnline":(time.time()-r["captured"])<=180,"capturedAt":datetime.fromtimestamp(r["captured"],timezone.utc).isoformat()} for r in rows]}
 @app.delete("/account-data")
 def delete_account_data(uid:str=Depends(current_uid)):
     with db() as c:
