@@ -64,7 +64,13 @@ class LocationUpdate(BaseModel):
     batteryPercent: Optional[int]=Field(default=None,ge=0,le=100)
     capturedAt: datetime
     familyId: str=Field(min_length=12,max_length=64)
+    deviceId: Optional[str]=Field(default=None,min_length=16,max_length=80)
 
+class DeviceRegister(BaseModel):
+    deviceId: str=Field(min_length=16,max_length=80)
+    deviceName: str=Field(min_length=1,max_length=100)
+    platform: str=Field(default="android",min_length=1,max_length=30)
+    batteryPercent: Optional[int]=Field(default=None,ge=0,le=100)
 class DatabaseConnection:
     """Small DB-API compatibility layer for the existing SQLite-style queries."""
     def __init__(self):
@@ -117,6 +123,8 @@ def init_db():
         CREATE TABLE IF NOT EXISTS members(family_id TEXT NOT NULL,uid TEXT NOT NULL,role TEXT NOT NULL,consent INTEGER NOT NULL DEFAULT 0,consent_version TEXT,consent_at REAL,PRIMARY KEY(family_id,uid),FOREIGN KEY(family_id) REFERENCES families(id) ON DELETE CASCADE,FOREIGN KEY(uid) REFERENCES users(uid) ON DELETE CASCADE);
         CREATE TABLE IF NOT EXISTS invites(code TEXT PRIMARY KEY,family_id TEXT NOT NULL,created_by TEXT NOT NULL,expires REAL NOT NULL,used INTEGER NOT NULL DEFAULT 0);
         CREATE TABLE IF NOT EXISTS locations(family_id TEXT NOT NULL,uid TEXT NOT NULL,lat REAL NOT NULL,lon REAL NOT NULL,accuracy REAL,captured REAL NOT NULL,battery INTEGER,PRIMARY KEY(family_id,uid),FOREIGN KEY(family_id,uid) REFERENCES members(family_id,uid) ON DELETE CASCADE);
+        CREATE TABLE IF NOT EXISTS devices(device_id TEXT PRIMARY KEY,uid TEXT NOT NULL,device_name TEXT NOT NULL,platform TEXT NOT NULL,created REAL NOT NULL,last_seen REAL NOT NULL,battery INTEGER,lat REAL,lon REAL,accuracy REAL,captured REAL,FOREIGN KEY(uid) REFERENCES users(uid) ON DELETE CASCADE);
+        CREATE INDEX IF NOT EXISTS idx_devices_uid_last_seen ON devices(uid,last_seen);
         CREATE TABLE IF NOT EXISTS entitlements(uid TEXT PRIMARY KEY,status TEXT NOT NULL,product_id TEXT,base_plan_id TEXT,token_hash TEXT,updated REAL NOT NULL,FOREIGN KEY(uid) REFERENCES users(uid) ON DELETE CASCADE);
         CREATE TABLE IF NOT EXISTS app_meta(k TEXT PRIMARY KEY,v TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS payment_subscriptions(subscription_id TEXT PRIMARY KEY,uid TEXT NOT NULL,status TEXT NOT NULL,created REAL NOT NULL,updated REAL NOT NULL,FOREIGN KEY(uid) REFERENCES users(uid) ON DELETE CASCADE);
@@ -189,7 +197,18 @@ async def size_limit(request:Request,call_next):
     if length and int(length)>MAX_BODY_BYTES: return JSONResponse(status_code=413,content={"detail":"Request too large"})
     return await call_next(request)
 @app.get("/health")
-def health(): return {"status":"ok","service":"familyguard-api","auth":"database-jwt","storage":DB_KIND,"locationSharing":"consent-gated"}
+def health():
+    try:
+        with db() as c:
+            c.execute("SELECT 1").fetchone()
+            if DB_KIND=="postgresql":
+                schema=c.execute("SELECT to_regclass('devices') AS table_name").fetchone()
+                table_ready=bool(schema and schema["table_name"])
+            else:
+                table_ready=bool(c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='devices'").fetchone())
+        return {"status":"ok","service":"familyguard-api","auth":"database-jwt","storage":DB_KIND,"databaseConnected":True,"deviceTableReady":table_ready,"locationSharing":"consent-gated"}
+    except Exception:
+        raise HTTPException(503,"Database connection or required schema is unavailable.")
 def issue_auth_session(uid:str):
     now=time.time()
     refresh=secrets.token_urlsafe(48)
@@ -334,7 +353,59 @@ def set_family_consent(payload:ConsentRequest,uid:str=Depends(current_uid)):
                   (1 if payload.shareLocation else 0,payload.consentVersion if payload.shareLocation else None,now if payload.shareLocation else None,payload.familyId,uid))
         if not payload.shareLocation:
             c.execute("DELETE FROM locations WHERE family_id=? AND uid=?",(payload.familyId,uid))
+            c.execute("UPDATE devices SET lat=NULL,lon=NULL,accuracy=NULL,captured=NULL WHERE uid=?",(uid,))
     return {"familyId":payload.familyId,"consent":payload.shareLocation,"revoked":not payload.shareLocation}
+
+@app.post("/devices/register")
+def register_device(payload:DeviceRegister,uid:str=Depends(current_uid)):
+    now=time.time()
+    with db() as c:
+        existing=c.execute("SELECT uid FROM devices WHERE device_id=?",(payload.deviceId,)).fetchone()
+        if existing and existing["uid"]!=uid:
+            raise HTTPException(409,"This device ID is already registered to another account.")
+        if existing:
+            c.execute("UPDATE devices SET device_name=?,platform=?,last_seen=?,battery=COALESCE(?,battery) WHERE device_id=? AND uid=?",
+                (payload.deviceName.strip(),payload.platform.strip().lower(),now,payload.batteryPercent,payload.deviceId,uid))
+        else:
+            c.execute("INSERT INTO devices(device_id,uid,device_name,platform,created,last_seen,battery) VALUES(?,?,?,?,?,?,?)",
+                (payload.deviceId,uid,payload.deviceName.strip(),payload.platform.strip().lower(),now,now,payload.batteryPercent))
+    return {"registered":True,"deviceId":payload.deviceId,"lastSeen":now}
+
+@app.get("/devices")
+def list_devices(familyId:Optional[str]=None,uid:str=Depends(current_uid)):
+    now=time.time()
+    with db() as c:
+        if familyId:
+            membership(c,uid,familyId)
+            rows=c.execute("""SELECT d.*,u.email,m.uid AS member_uid,m.consent
+                FROM devices d JOIN members m ON m.uid=d.uid AND m.family_id=?
+                JOIN users u ON u.uid=d.uid ORDER BY d.last_seen DESC""",(familyId,)).fetchall()
+        else:
+            rows=c.execute("""SELECT d.*,u.email,1 AS consent,d.uid AS member_uid
+                FROM devices d JOIN users u ON u.uid=d.uid
+                WHERE d.uid=? ORDER BY d.last_seen DESC""",(uid,)).fetchall()
+    result=[]
+    for r in rows:
+        consent=bool(r["consent"])
+        if familyId and not consent:
+            continue
+        item={"deviceId":r["device_id"],"deviceName":r["device_name"],"platform":r["platform"],
+            "uid":r["member_uid"],"email":r["email"],"lastSeen":r["last_seen"],
+            "online":r["last_seen"]>=now-180,"batteryPercent":r["battery"],
+            "locationConsent":consent if familyId else None}
+        if (not familyId or consent) and r["lat"] is not None and r["lon"] is not None:
+            item["location"]={"latitude":r["lat"],"longitude":r["lon"],
+                "accuracyMeters":r["accuracy"],"capturedAt":r["captured"]}
+        result.append(item)
+    return {"devices":result,"count":len(result),"onlineCount":sum(1 for d in result if d["online"])}
+
+@app.delete("/devices/{device_id}")
+def remove_device(device_id:str,uid:str=Depends(current_uid)):
+    with db() as c:
+        row=c.execute("SELECT device_id FROM devices WHERE device_id=? AND uid=?",(device_id,uid)).fetchone()
+        if not row: raise HTTPException(404,"Device not found on this account.")
+        c.execute("DELETE FROM devices WHERE device_id=? AND uid=?",(device_id,uid))
+    return {"removed":True,"deviceId":device_id}
 
 @app.post("/location/update")
 def update_location(payload:LocationUpdate,uid:str=Depends(current_uid)):
@@ -349,7 +420,12 @@ def update_location(payload:LocationUpdate,uid:str=Depends(current_uid)):
         c.execute("""INSERT INTO locations(family_id,uid,lat,lon,accuracy,captured,battery) VALUES(?,?,?,?,?,?,?)
         ON CONFLICT(family_id,uid) DO UPDATE SET lat=excluded.lat,lon=excluded.lon,accuracy=excluded.accuracy,captured=excluded.captured,battery=excluded.battery""",
         (payload.familyId,uid,payload.latitude,payload.longitude,payload.accuracyMeters,captured,payload.batteryPercent))
-    return {"updated":True,"capturedAt":payload.capturedAt.isoformat(),"batteryPercent":payload.batteryPercent}
+        if payload.deviceId:
+            device=c.execute("SELECT device_id FROM devices WHERE device_id=? AND uid=?",(payload.deviceId,uid)).fetchone()
+            if not device: raise HTTPException(404,"Register this device before sharing its location.")
+            c.execute("UPDATE devices SET last_seen=?,battery=?,lat=?,lon=?,accuracy=?,captured=? WHERE device_id=? AND uid=?",
+                (now,payload.batteryPercent,payload.latitude,payload.longitude,payload.accuracyMeters,captured,payload.deviceId,uid))
+    return {"updated":True,"deviceId":payload.deviceId,"capturedAt":payload.capturedAt.isoformat(),"batteryPercent":payload.batteryPercent}
 
 @app.get("/location/family")
 def family_locations(familyId:str,uid:str=Depends(current_uid)):
