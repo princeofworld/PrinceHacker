@@ -7,7 +7,8 @@ from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Optional
 from fastapi import FastAPI, Depends, Header, HTTPException, Request
-from fastapi.responses import JSONResponse, FileResponse
+from fastapi.responses import JSONResponse, FileResponse, Response
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from urllib.parse import quote
 from fastapi.staticfiles import StaticFiles
@@ -32,6 +33,23 @@ else:
 
 INVITE_TTL_MINUTES=max(5,min(60,int(os.getenv("INVITE_TTL_MINUTES","15"))))
 MAX_BODY_BYTES=16384
+BACKUP_MAGIC=b"FGBACKUP1"
+BACKUP_FORMAT_VERSION=1
+BACKUP_TABLES=("users","refresh_sessions","rate_limits","families","members","invites","locations","devices","entitlements","app_meta","payment_subscriptions","utr_payments")
+BACKUP_COLUMNS={
+    "users":("uid","email","password_hash","created"),
+    "refresh_sessions":("token_hash","uid","expires","created","access_token_hash"),
+    "rate_limits":("bucket_key","window_start","hits"),
+    "families":("id","name","owner_uid","created"),
+    "members":("family_id","uid","role","consent","consent_version","consent_at"),
+    "invites":("code","family_id","created_by","expires","used"),
+    "locations":("family_id","uid","lat","lon","accuracy","captured","battery"),
+    "devices":("device_id","uid","device_name","platform","created","last_seen","battery","lat","lon","accuracy","captured"),
+    "entitlements":("uid","status","product_id","base_plan_id","token_hash","updated","expires_at"),
+    "app_meta":("k","v"),
+    "payment_subscriptions":("subscription_id","uid","status","created","updated"),
+    "utr_payments":("id","uid","utr","amount_paise","status","created","reviewed","review_note"),
+}
 DB_PATH=os.getenv("FAMILYGUARD_DB_PATH", str(Path(os.getenv("RENDER_DISK_PATH","/var/data"))/"familyguard.sqlite3"))
 if not os.getenv("RENDER_DISK_PATH") and not Path("/var/data").exists():
     DB_PATH=os.getenv("FAMILYGUARD_DB_PATH", str(Path(__file__).resolve().parent/"familyguard.sqlite3"))
@@ -144,6 +162,66 @@ def init_db():
         row=c.execute("SELECT v FROM app_meta WHERE k='jwt_secret'").fetchone()
         if not row: c.execute("INSERT INTO app_meta VALUES('jwt_secret',?)",(secrets.token_urlsafe(48),))
 init_db()
+def backup_encryption_key():
+    value=os.getenv("BACKUP_ENCRYPTION_KEY","").strip()
+    try:
+        key=bytes.fromhex(value)
+    except ValueError:
+        key=b""
+    if len(key)!=32:
+        raise HTTPException(503,"Encrypted backups are disabled. Configure BACKUP_ENCRYPTION_KEY as 64 hexadecimal characters in the hosting secret settings.")
+    return key
+
+def create_backup_blob():
+    key=backup_encryption_key()
+    with db() as c:
+        tables={table:[dict(row) for row in c.execute("SELECT * FROM "+table).fetchall()] for table in BACKUP_TABLES}
+    payload=json.dumps({
+        "format_version":BACKUP_FORMAT_VERSION,
+        "created_at":datetime.now(timezone.utc).isoformat(),
+        "source_database":DB_KIND,
+        "tables":tables,
+    },separators=(",",":"),sort_keys=True,default=str).encode("utf-8")
+    nonce=secrets.token_bytes(12)
+    return BACKUP_MAGIC+nonce+AESGCM(key).encrypt(nonce,payload,BACKUP_MAGIC)
+
+def restore_backup_blob(blob:bytes,confirm_overwrite:bool=False):
+    if not confirm_overwrite:
+        raise HTTPException(400,"Restore requires explicit confirm_overwrite=True because it replaces all current database records.")
+    key=backup_encryption_key()
+    if not blob.startswith(BACKUP_MAGIC) or len(blob)<len(BACKUP_MAGIC)+12+16:
+        raise HTTPException(400,"This is not a valid FamilyGuard encrypted backup.")
+    nonce=blob[len(BACKUP_MAGIC):len(BACKUP_MAGIC)+12]
+    try:
+        payload=json.loads(AESGCM(key).decrypt(nonce,blob[len(BACKUP_MAGIC)+12:],BACKUP_MAGIC))
+    except Exception:
+        raise HTTPException(400,"Backup authentication failed. Check the encryption key and file integrity.")
+    if payload.get("format_version")!=BACKUP_FORMAT_VERSION or set(payload.get("tables",{}))!=set(BACKUP_TABLES):
+        raise HTTPException(400,"Backup format or database schema is not supported by this version.")
+    tables=payload["tables"]
+    for table,rows in tables.items():
+        if not isinstance(rows,list):
+            raise HTTPException(400,"Backup table data is invalid.")
+        for row in rows:
+            if not isinstance(row,dict) or set(row)!=set(BACKUP_COLUMNS[table]):
+                raise HTTPException(400,"Backup columns do not match the supported schema.")
+    with db() as c:
+        if c.is_postgres:
+            c.execute("TRUNCATE TABLE "+", ".join(BACKUP_TABLES)+" CASCADE")
+        else:
+            c.execute("PRAGMA foreign_keys=OFF")
+            for table in reversed(BACKUP_TABLES):
+                c.execute("DELETE FROM "+table)
+        for table in BACKUP_TABLES:
+            columns=BACKUP_COLUMNS[table]
+            placeholders=",".join("?" for _ in columns)
+            statement="INSERT INTO "+table+" ("+",".join(columns)+") VALUES ("+placeholders+")"
+            for row in tables[table]:
+                c.execute(statement,tuple(row[column] for column in columns))
+        if not c.is_postgres:
+            c.execute("PRAGMA foreign_keys=ON")
+    return {"restored":True,"createdAt":payload["created_at"],"tables":{table:len(rows) for table,rows in tables.items()}}
+
 def secret():
     with db() as c: return c.execute("SELECT v FROM app_meta WHERE k='jwt_secret'").fetchone()["v"].encode()
 def b64(x:bytes)->str: return base64.urlsafe_b64encode(x).rstrip(b"=").decode()
@@ -234,7 +312,12 @@ def health():
                 table_ready=bool(schema and schema["table_name"])
             else:
                 table_ready=bool(c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='devices'").fetchone())
-        return {"status":"ok","service":"familyguard-api","auth":"database-jwt","storage":DB_KIND,"databaseConnected":True,"deviceTableReady":table_ready,"locationSharing":"consent-gated"}
+        warnings=[]
+        if DB_KIND=="sqlite" and not DB_PATH.startswith("/var/data/"):
+            warnings.append("SQLite is using a local path; verify a persistent disk is mounted or configure PostgreSQL.")
+        if not os.getenv("BACKUP_ENCRYPTION_KEY","").strip():
+            warnings.append("Encrypted admin backups are disabled until BACKUP_ENCRYPTION_KEY is configured.")
+        return {"status":"ok","service":"familyguard-api","auth":"database-jwt","storage":DB_KIND,"databaseConnected":True,"deviceTableReady":table_ready,"locationSharing":"consent-gated","encryptedBackupsConfigured":bool(os.getenv("BACKUP_ENCRYPTION_KEY","").strip()),"backupMode":"manual-admin-download","productionWarnings":warnings}
     except Exception:
         raise HTTPException(503,"Database connection or required schema is unavailable.")
 def issue_auth_session(uid:str):
@@ -686,6 +769,12 @@ def admin_reject_utr(payment_id:str,payload:AdminReview,_:str=Depends(require_ad
         c.execute("UPDATE utr_payments SET status='rejected',reviewed=?,review_note=? WHERE id=?",(time.time(),payload.note or "Payment could not be verified",payment_id))
     telegram_notify("❌ FamilyGuard: UTR rejected\nUTR: "+row["utr"]+"\nAccount: "+row["email"]+"\nReason: "+(payload.note or "Payment could not be verified"))
     return {"rejected":True,"message":"UTR rejected. Premium was not granted."}
+
+@app.get("/admin/api/backup")
+def admin_download_backup(_:str=Depends(require_admin)):
+    blob=create_backup_blob()
+    filename="familyguard-backup-"+datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")+".fgbk"
+    return Response(content=blob,media_type="application/octet-stream",headers={"Content-Disposition":'attachment; filename="'+filename+'"'})
 
 @app.get("/app/latest-version")
 def latest_app_version():
