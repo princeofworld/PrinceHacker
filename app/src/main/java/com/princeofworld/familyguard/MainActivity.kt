@@ -71,6 +71,7 @@ class MainActivity : ComponentActivity() {
     private var inviteCode by mutableStateOf("")
     private var familyLocationsText by mutableStateOf("No family locations loaded.")
     private var familyConsentEnabled by mutableStateOf(false)
+    private var locationSharingActive by mutableStateOf(false)
 
     private val locationPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
@@ -137,7 +138,11 @@ class MainActivity : ComponentActivity() {
                     onLogout = { logout() },
                     onPrivacy = { openWebPage("https://raw.githubusercontent.com/princeofworld/PrinceHacker/main/PRIVACY_POLICY.md") },
                     onTerms = { openWebPage("https://raw.githubusercontent.com/princeofworld/PrinceHacker/main/TERMS_OF_SERVICE.md") },
-                    onDeleteAccount = { showDeleteDataDialog = true }
+                    onDeleteAccount = { showDeleteDataDialog = true },
+                    familyStatus = familyStatus,
+                    locationSharingActive = locationSharingActive,
+                    onStartSharing = { startFamilyLocationSharing() },
+                    onStopSharing = { stopFamilyLocationSharing() }
                 )
                 pendingDisclosure?.let { step ->
                     val disclosure = when (step) {
@@ -226,6 +231,9 @@ class MainActivity : ComponentActivity() {
         super.onResume()
         if (signedIn && consentAccepted) refreshUsageReport()
         if (signedIn) refreshSubscriptionStatus()
+        if (signedIn) refreshFamilyContext()
+        locationSharingActive = getSharedPreferences("familyguard_family", Context.MODE_PRIVATE)
+            .getString("locationSessionStatus", "stopped") == "active"
         if (signedIn) verificationExecutor.execute { try { FamilyGuardApi.registerThisDevice(this) } catch (_: Exception) { } }
         updatePermissionStatus()
     }
@@ -307,6 +315,36 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    private fun refreshFamilyContext() {
+        verificationExecutor.execute {
+            try {
+                val result = FamilyGuardApi.get(this, "/family/mine")
+                val families = result.optJSONArray("families")
+                val first = if (families != null && families.length() > 0) families.getJSONObject(0) else null
+                val id = first?.optString("familyId").orEmpty()
+                val members = first?.optJSONArray("members")
+                val uid = getSharedPreferences("familyguard_family", Context.MODE_PRIVATE).getString("uid", null)
+                var consent = false
+                if (members != null) {
+                    for (i in 0 until members.length()) {
+                        val member = members.getJSONObject(i)
+                        if (member.optString("uid") == uid) consent = member.optBoolean("locationConsent", false)
+                    }
+                }
+                getSharedPreferences("familyguard_family", Context.MODE_PRIVATE).edit()
+                    .putString("familyId", id).putBoolean("locationConsent", consent).apply()
+                runOnUiThread {
+                    familyId = id
+                    familyConsentEnabled = consent
+                    familyStatus = if (id.isBlank()) "No family joined yet. Join a family on the website first."
+                        else "Connected to family. Sharing requires a fresh 10-minute session."
+                }
+            } catch (e: Exception) {
+                runOnUiThread { familyStatus = e.message ?: "Could not load family membership." }
+            }
+        }
+    }
+
     private fun startFamilyLocationSharing() {
         if (!hasLocationPermission()) {
             notice = "Grant foreground location permission first, then try again."
@@ -328,12 +366,16 @@ class MainActivity : ComponentActivity() {
             getSharedPreferences("familyguard_family", MODE_PRIVATE).edit().putBoolean("locationConsent", true).apply()
             val intent = Intent(this, FamilyLocationService::class.java)
             if (Build.VERSION.SDK_INT >= 26) startForegroundService(intent) else startService(intent)
-            "Live sharing is on. Android displays a persistent notification."
+            locationSharingActive = true
+            getSharedPreferences("familyguard_family", MODE_PRIVATE).edit().putString("locationSessionStatus", "active").apply()
+            "Live sharing is on for up to 10 minutes. Android displays a persistent notification."
         }
     }
 
     private fun stopFamilyLocationSharing() {
         stopService(Intent(this, FamilyLocationService::class.java))
+        locationSharingActive = false
+        getSharedPreferences("familyguard_family", MODE_PRIVATE).edit().putString("locationSessionStatus", "stopped").putBoolean("locationConsent", false).apply()
         runFamilyTask {
             val id = familyId.ifBlank { getSharedPreferences("familyguard_family", MODE_PRIVATE).getString("familyId", "") ?: "" }
             if (id.isNotBlank()) FamilyGuardApi.post(this, "/family/consent", JSONObject().put("familyId", id).put("shareLocation", false))
@@ -649,7 +691,11 @@ private fun FamilyGuardDashboard(
     onLogout: () -> Unit,
     onPrivacy: () -> Unit,
     onTerms: () -> Unit,
-    onDeleteAccount: () -> Unit
+    onDeleteAccount: () -> Unit,
+    familyStatus: String,
+    locationSharingActive: Boolean,
+    onStartSharing: () -> Unit,
+    onStopSharing: () -> Unit
 ) {
     Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
         Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp),
@@ -664,6 +710,19 @@ private fun FamilyGuardDashboard(
                         style = MaterialTheme.typography.bodySmall)
                     Button(onClick = onOpenWebsite, modifier = Modifier.fillMaxWidth()) {
                         Text("Open Website Dashboard")
+                    }
+                }
+            }
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text("10-minute Location Sharing", style = MaterialTheme.typography.titleLarge)
+                    Text(familyStatus, style = MaterialTheme.typography.bodyMedium)
+                    Text(if (locationSharingActive) "Session active. It will stop automatically at 10 minutes." else "No active session. Starting requires your explicit action.", style = MaterialTheme.typography.bodySmall)
+                    Button(onClick = onStartSharing, enabled = !locationSharingActive, modifier = Modifier.fillMaxWidth()) {
+                        Text("START 10-MINUTE SESSION")
+                    }
+                    OutlinedButton(onClick = onStopSharing, enabled = locationSharingActive, modifier = Modifier.fillMaxWidth()) {
+                        Text("STOP SHARING NOW")
                     }
                 }
             }
