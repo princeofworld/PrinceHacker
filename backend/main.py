@@ -190,7 +190,7 @@ def delete_account_data(uid:str=Depends(current_uid)):
     with db() as c:
         c.execute("DELETE FROM users WHERE uid=?",(uid,))
     return {"deleted":True,"billingManagedBy":"Google Play","note":"Google Play subscription cancellation is separate."}
-@app.get("/")
+@app.get("/api")
 def root(): return {"service":"FamilyGuard API","docs":"/docs","health":"/health"}
 
 
