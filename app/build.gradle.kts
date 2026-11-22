@@ -21,8 +21,8 @@ android {
         applicationId = "com.princeofworld.familyguard"
         minSdk = 26
         targetSdk = 36
-        versionCode = 6
-        versionName = "1.3.1"
+        versionCode = 7
+        versionName = "1.3.2"
         buildConfigField("String", "FAMILYGUARD_API_BASE_URL", "\"${providers.gradleProperty("familyguardApiBaseUrl").orNull ?: System.getenv("FAMILYGUARD_API_BASE_URL") ?: "https://princehacker.onrender.com"}\"")
     }
 
