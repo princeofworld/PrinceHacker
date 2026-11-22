@@ -20,3 +20,5 @@ services:
         sync: false
       - key: BACKUP_ENCRYPTION_KEY
         sync: false
+      - key: RAZORPAY_ENABLED
+        value: "false"
