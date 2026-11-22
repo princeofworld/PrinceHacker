@@ -325,7 +325,7 @@ def health():
             warnings.append("SQLite is using a local path; verify a persistent disk is mounted or configure PostgreSQL.")
         if not backup_encryption_configured():
             warnings.append("Encrypted admin backups are disabled until a valid 64-character BACKUP_ENCRYPTION_KEY is configured.")
-        return {"status":"ok","service":"familyguard-api","auth":"database-jwt","storage":DB_KIND,"databaseConnected":True,"deviceTableReady":table_ready,"locationSharing":"consent-gated","encryptedBackupsConfigured":backup_encryption_configured(),"backupMode":"manual-admin-download","productionWarnings":warnings}
+        return {"status":"ok","service":"familyguard-api","auth":"database-jwt","storage":DB_KIND,"databaseConnected":True,"deviceTableReady":table_ready,"locationSharing":"consent-gated","encryptedBackupsConfigured":backup_encryption_configured(),"backupMode":"manual-admin-download","razorpayEnabled":razorpay_configured(),"productionWarnings":warnings}
     except Exception:
         raise HTTPException(503,"Database connection or required schema is unavailable.")
 def issue_auth_session(uid:str):
@@ -399,7 +399,11 @@ def change_password(payload:PasswordChangeIn,uid:str=Depends(current_uid)):
     return {"passwordChanged":True,"sessionsRevoked":True,"message":"Password changed. Please sign in again on your devices."}
 
 def razorpay_configured():
-    return bool(os.getenv("RAZORPAY_KEY_ID") and os.getenv("RAZORPAY_KEY_SECRET") and os.getenv("RAZORPAY_PLAN_ID"))
+    # The product's production payment mode is manual UPI review. Legacy
+    # recurring checkout stays disabled unless an operator explicitly enables it.
+    return os.getenv("RAZORPAY_ENABLED","false").strip().lower()=="true" and bool(
+        os.getenv("RAZORPAY_KEY_ID") and os.getenv("RAZORPAY_KEY_SECRET") and os.getenv("RAZORPAY_PLAN_ID")
+    )
 def razorpay_request(path: str, method: str="GET", payload: dict|None=None):
     key=os.getenv("RAZORPAY_KEY_ID","").strip()
     secret_value=os.getenv("RAZORPAY_KEY_SECRET","").strip()
@@ -417,7 +421,8 @@ def razorpay_request(path: str, method: str="GET", payload: dict|None=None):
 
 @app.get("/billing/config")
 def billing_config():
-    return {"provider":"razorpay","configured":razorpay_configured(),"amount":99900,"currency":"INR","interval":"monthly","displayPrice":"₹999/month","keyId":os.getenv("RAZORPAY_KEY_ID") if razorpay_configured() else None}
+    configured=razorpay_configured()
+    return {"provider":"razorpay" if configured else "manual_upi","configured":configured,"amount":99900,"currency":"INR","interval":"monthly","displayPrice":"₹999 / 30 days","keyId":os.getenv("RAZORPAY_KEY_ID") if configured else None}
 
 @app.get("/billing/status")
 def billing_status(uid:str=Depends(current_uid)):
@@ -604,6 +609,7 @@ def payment_create_order(uid:str=Depends(current_uid)):
 
 @app.post("/payment/verify")
 def payment_verify(payload:SubscriptionVerify,uid:str=Depends(current_uid)):
+    if not razorpay_configured(): raise HTTPException(503,"Razorpay recurring checkout is disabled. Submit a UPI UTR for manual Admin review.")
     secret_value=os.getenv("RAZORPAY_KEY_SECRET","").strip()
     if not secret_value: raise HTTPException(503,"Razorpay verification is not configured. Premium remains locked.")
     with db() as c:
@@ -629,6 +635,7 @@ def payment_verify(payload:SubscriptionVerify,uid:str=Depends(current_uid)):
 
 @app.post("/payment/webhook")
 async def payment_webhook(request:Request):
+    if not razorpay_configured(): raise HTTPException(503,"Razorpay recurring checkout is disabled. Manual UPI review remains the active payment mode.")
     secret_value=os.getenv("RAZORPAY_WEBHOOK_SECRET","").strip()
     if not secret_value: raise HTTPException(503,"Webhook verification is not configured.")
     raw=await request.body()
