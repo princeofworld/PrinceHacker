@@ -31,7 +31,7 @@ def api(request, monkeypatch, tmp_path):
 
 
 def register(client):
-    email = f"{uuid.uuid4().hex}@example.test"
+    email = f"{uuid.uuid4().hex}@gmail.com"
     response = client.post("/auth/register", json={"email": email, "password": "Correct-Horse-42!"})
     assert response.status_code == 200, response.text
     data = response.json()
