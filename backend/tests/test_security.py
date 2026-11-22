@@ -193,6 +193,45 @@ def test_public_privacy_and_terms_documents_are_served(api):
     assert terms_response.status_code == 200
     assert "direct upi" in terms_response.text.lower()
 
+
+
+
+def test_encrypted_backup_download_and_restore_round_trip(api, monkeypatch):
+    main, client = api
+    monkeypatch.setenv("ADMIN_PANEL_USERNAME", admin_auth()[0])
+    monkeypatch.setenv("ADMIN_PANEL_PASSWORD", admin_auth()[1])
+    monkeypatch.setenv("BACKUP_ENCRYPTION_KEY", "ab" * 32)
+    _, user, user_headers = register(client)
+
+    denied = client.get("/admin/api/backup")
+    assert denied.status_code == 401
+
+    downloaded = client.get("/admin/api/backup", auth=admin_auth())
+    assert downloaded.status_code == 200
+    backup = downloaded.content
+    assert backup.startswith(main.BACKUP_MAGIC)
+    assert user["localId"].encode() not in backup
+    assert b"password_hash" not in backup
+
+    with main.db() as conn:
+        conn.execute("DELETE FROM users WHERE uid=?", (user["localId"],))
+    assert client.get("/account/profile", headers=user_headers).status_code == 401
+
+    with pytest.raises(Exception):
+        main.restore_backup_blob(backup, confirm_overwrite=False)
+    restored = main.restore_backup_blob(backup, confirm_overwrite=True)
+    assert restored["restored"] is True
+    assert restored["tables"]["users"] == 1
+    assert client.get("/account/profile", headers=user_headers).status_code == 200
+
+
+def test_backup_requires_valid_encryption_key(api, monkeypatch):
+    main, client = api
+    monkeypatch.delenv("BACKUP_ENCRYPTION_KEY", raising=False)
+    response = client.get("/admin/api/backup", auth=admin_auth())
+    assert response.status_code == 503
+
+
 def test_logout_revokes_only_the_logged_out_device_session(api):
     email, first, first_headers = register(api[1])
     second = api[1].post("/auth/login", json={"email": email, "password": "Correct-Horse-42!"})
