@@ -19,11 +19,11 @@
       </form><p id="auth-message" class="message" role="status"></p>
     </section>
     <section id="dashboard" class="hidden">
-      <div class="welcome"><div><h2>Family dashboard</h2><p class="muted" id="account-label"></p></div><button class="secondary" id="logout">Sign out</button></div>
+      <div class="welcome"><div><h2>Family dashboard</h2><p class="muted" id="account-label"></p></div><div class="actions"><a class="download-link" href="https://github.com/princeofworld/PrinceHacker/releases/latest/download/FamilyGuard-release-signed.apk">Download signed APK</a><button class="secondary" id="logout">Sign out</button></div></div>
       <div class="notice"><strong>Consent-first monitoring</strong><p>Only information shared by a member who has explicitly enabled sharing is shown. This dashboard does not access microphones, calls, cameras, private messages, or hidden activity.</p></div>
       <section class="panel">
-        <h3>Shared family location</h3>
-        <p class="muted">Enter the Family ID shown in your Android app. Location sharing must be enabled by each participating member.</p>
+        <h3>Device safety & shared location</h3>
+        <p class="muted">Enter the Family ID shown in your Android app. Location sharing must be enabled by each participating member. Battery and online status are sent only during visible, consented live-location sharing.</p>
         <label>Family ID<input id="family-id" autocomplete="off" placeholder="Paste your Family ID"></label>
         <button id="refresh">Refresh shared locations</button>
         <p id="location-message" class="message" role="status"></p>
