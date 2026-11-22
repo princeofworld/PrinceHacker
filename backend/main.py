@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Optional
 from fastapi import FastAPI, Depends, Header, HTTPException, Request
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, SecretStr, EmailStr
 
 APP_PACKAGE=os.getenv("PACKAGE_NAME","com.princeofworld.familyguard")
@@ -191,3 +192,9 @@ def delete_account_data(uid:str=Depends(current_uid)):
     return {"deleted":True,"billingManagedBy":"Google Play","note":"Google Play subscription cancellation is separate."}
 @app.get("/")
 def root(): return {"service":"FamilyGuard API","docs":"/docs","health":"/health"}
+
+
+# Serve the installable browser dashboard from the same origin as the API.
+WEB_DIR = Path(__file__).resolve().parent.parent / "web"
+if WEB_DIR.is_dir():
+    app.mount("/", StaticFiles(directory=str(WEB_DIR), html=True), name="familyguard-web")
