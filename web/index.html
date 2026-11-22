@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#101827"><meta name="description" content="FamilyGuard consent-first family safety dashboard">
+  <link rel="manifest" href="/manifest.webmanifest"><link rel="stylesheet" href="/styles.css">
+  <title>PrinceHacker • FamilyGuard</title>
+</head>
+<body>
+  <main class="shell">
+    <header><div class="brand-mark">FG</div><div><h1>PrinceHacker</h1><p>FamilyGuard secure dashboard</p></div><span id="connection" class="pill">Checking service…</span></header>
+    <section id="auth" class="panel">
+      <h2>Sign in to your account</h2>
+      <p class="muted">Use the same email and password as your FamilyGuard Android app.</p>
+      <form id="auth-form">
+        <label>Email<input id="email" type="email" autocomplete="username" required></label>
+        <label>Password<input id="password" type="password" autocomplete="current-password" minlength="10" required></label>
+        <div class="actions"><button type="submit">Sign in</button><button type="button" class="secondary" id="register">Create account</button></div>
+      </form><p id="auth-message" class="message" role="status"></p>
+    </section>
+    <section id="dashboard" class="hidden">
+      <div class="welcome"><div><h2>Family dashboard</h2><p class="muted" id="account-label"></p></div><button class="secondary" id="logout">Sign out</button></div>
+      <div class="notice"><strong>Consent-first monitoring</strong><p>Only information shared by a member who has explicitly enabled sharing is shown. This dashboard does not access microphones, calls, cameras, private messages, or hidden activity.</p></div>
+      <section class="panel">
+        <h3>Shared family location</h3>
+        <p class="muted">Enter the Family ID shown in your Android app. Location sharing must be enabled by each participating member.</p>
+        <label>Family ID<input id="family-id" autocomplete="off" placeholder="Paste your Family ID"></label>
+        <button id="refresh">Refresh shared locations</button>
+        <p id="location-message" class="message" role="status"></p>
+        <div id="locations" class="location-list"><p class="muted">No locations loaded.</p></div>
+      </section>
+      <section class="panel">
+        <h3>Account & privacy</h3><p class="muted">Sign out to clear this browser session. Revoke location sharing from the Android app at any time.</p>
+        <button class="secondary" id="clear-session">Clear browser session</button>
+      </section>
+    </section>
+    <footer>FamilyGuard • Secure, visible and consent-based family safety</footer>
+  </main>
+  <script src="/app.js" defer></script>
+</body></html>
