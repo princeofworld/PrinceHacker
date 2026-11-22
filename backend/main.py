@@ -184,8 +184,8 @@ def location_update(payload:LocationUpdate,uid:str=Depends(current_uid)):
 @app.get("/location/family")
 def location_family(familyId:str,uid:str=Depends(current_uid)):
     with db() as c:
-        viewer=membership(c,uid,familyId)
-        if not viewer["consent"]: raise HTTPException(403,"Enable your own location-sharing consent to view family locations")
+        membership(c,uid,familyId)
+        # A family member may view only locations shared by members who individually consented.
         rows=c.execute("""SELECT l.uid,l.lat,l.lon,l.accuracy,l.captured,l.battery FROM locations l JOIN members m ON m.family_id=l.family_id AND m.uid=l.uid WHERE l.family_id=? AND m.consent=1 AND l.captured>=?""",(familyId,time.time()-600)).fetchall()
     return {"familyId":familyId,"locations":[{"uid":r["uid"],"latitude":r["lat"],"longitude":r["lon"],"accuracyMeters":r["accuracy"],"batteryPercent":r["battery"],"isOnline":(time.time()-r["captured"])<=180,"capturedAt":datetime.fromtimestamp(r["captured"],timezone.utc).isoformat()} for r in rows]}
 @app.delete("/account-data")
