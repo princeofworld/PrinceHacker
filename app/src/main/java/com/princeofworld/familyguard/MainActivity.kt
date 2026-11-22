@@ -52,7 +52,9 @@ import java.util.concurrent.Executors
 import org.json.JSONObject
 
 class MainActivity : ComponentActivity() {
-    private var locationText by mutableStateOf("Location sharing is off. Choose Update location to request access.")
+    private var signedIn by mutableStateOf(false)
+    private var loginMessage by mutableStateOf("")
+    private var locationText by mutableStateOf("Location permission has not been requested.")
     private var consentAccepted by mutableStateOf(false)
     private var usageText by mutableStateOf("Usage report is available to Premium subscribers after enabling Usage Access.")
     private var premium by mutableStateOf(false)
@@ -100,10 +102,17 @@ class MainActivity : ComponentActivity() {
             .getBoolean("parental_disclosure_accepted_v1", false)
         familyId = getSharedPreferences("familyguard_family", Context.MODE_PRIVATE).getString("familyId", "") ?: ""
         familyConsentEnabled = getSharedPreferences("familyguard_family", Context.MODE_PRIVATE).getBoolean("locationConsent", false)
-        refreshSubscriptionStatus()
+        signedIn = !getSharedPreferences("familyguard_family", Context.MODE_PRIVATE).getString("idToken", null).isNullOrBlank()
+        if (signedIn) refreshSubscriptionStatus()
         setContent {
             MaterialTheme(colorScheme = darkColorScheme()) {
-                if (!consentAccepted) {
+                if (!signedIn) {
+                    LoginScreen(
+                        message = loginMessage,
+                        onLogin = { email, password -> authenticateFamily(email, password) },
+                        onOpenWebsite = { openWebPage("https://princehacker.onrender.com/") }
+                    )
+                } else if (!consentAccepted) {
                     ParentalConsentDisclosureScreen(
                         onAccept = {
                             getSharedPreferences("familyguard_privacy", Context.MODE_PRIVATE)
@@ -115,40 +124,16 @@ class MainActivity : ComponentActivity() {
                     )
                 } else FamilyGuardDashboard(
                     premium = premium,
-                    billingReady = billingReady,
                     billingMessage = billingMessage,
-                    premiumPriceLabel = premiumPriceLabel,
-                    locationText = locationText,
                     usageText = usageText,
-                    familyStatus = familyStatus,
-                    familyId = familyId,
-                    inviteCode = inviteCode,
-                    familyLocationsText = familyLocationsText,
-                    familyConsentEnabled = familyConsentEnabled,
-                    onFamilyAuth = { email, password, create -> authenticateFamily(email, password, create) },
-                    onCreateFamily = { name -> createFamily(name) },
-                    onJoinFamily = { code -> joinFamily(code) },
-                    onFamilyConsent = { enabled -> setFamilyConsent(enabled) },
-                    onStartSharing = { startFamilyLocationSharing() },
-                    onStopSharing = { stopFamilyLocationSharing() },
-                    onFetchFamilyLocations = { fetchFamilyLocations() },
-                    onLocation = {
-                        locationPermissionLauncher.launch(arrayOf(
-                            Manifest.permission.ACCESS_FINE_LOCATION,
-                            Manifest.permission.ACCESS_COARSE_LOCATION
-                        ))
-                    },
-                    onUpgrade = { openPremiumCheckout() },
-                    onRestore = { refreshSubscriptionStatus() },
-                    onUsage = { openUsageAccessSettings() },
-                    onSos = { sendSosAlert() },
-                    onNotice = { notice = it },
                     permissionStatusText = permissionStatusText,
                     onSetupPermissions = { beginPermissionSetup() },
+                    onUsage = { openUsageAccessSettings() },
+                    onSos = { sendSosAlert() },
+                    onOpenWebsite = { openWebPage("https://princehacker.onrender.com/") },
+                    onLogout = { logout() },
                     onPrivacy = { openWebPage("https://raw.githubusercontent.com/princeofworld/PrinceHacker/main/PRIVACY_POLICY.md") },
-                    onTerms = { openWebPage("https://raw.githubusercontent.com/princeofworld/PrinceHacker/main/TERMS_OF_SERVICE.md") },
-                    onDeleteData = { showDeleteDataDialog = true },
-                    onCheckUpdate = { checkForAppUpdate() }
+                    onTerms = { openWebPage("https://raw.githubusercontent.com/princeofworld/PrinceHacker/main/TERMS_OF_SERVICE.md") }
                 )
                 pendingDisclosure?.let { step ->
                     val disclosure = when (step) {
@@ -204,8 +189,8 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
-        if (consentAccepted) refreshUsageReport()
-        refreshSubscriptionStatus()
+        if (signedIn && consentAccepted) refreshUsageReport()
+        if (signedIn) refreshSubscriptionStatus()
         updatePermissionStatus()
     }
 
@@ -225,12 +210,31 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun authenticateFamily(email: String, password: String, create: Boolean) {
-        runFamilyTask {
-            val result = FamilyGuardApi.authenticate(email.trim(), password, create)
-            FamilyGuardApi.saveSession(this, result)
-            "FamilyGuard account " + (if (create) "created" else "signed in")
+    private fun authenticateFamily(email: String, password: String) {
+        loginMessage = "Signing in…"
+        verificationExecutor.execute {
+            try {
+                val result = FamilyGuardApi.authenticate(email.trim(), password)
+                FamilyGuardApi.saveSession(this, result)
+                runOnUiThread {
+                    signedIn = true
+                    loginMessage = "Signed in successfully."
+                    refreshSubscriptionStatus()
+                }
+            } catch (e: Exception) {
+                runOnUiThread { loginMessage = e.message ?: "Sign-in failed. Check your details and try again." }
+            }
         }
+    }
+
+    private fun logout() {
+        stopService(Intent(this, FamilyLocationService::class.java))
+        getSharedPreferences("familyguard_family", Context.MODE_PRIVATE).edit()
+            .remove("idToken").remove("refreshToken").remove("uid").remove("tokenExpiry").apply()
+        signedIn = false
+        premium = false
+        billingReady = false
+        loginMessage = "You have been signed out."
     }
 
     private fun createFamily(name: String) {
@@ -549,144 +553,103 @@ private fun ParentalConsentDisclosureScreen(
 }
 
 @Composable
-private fun FamilyGuardDashboard(
-    premium: Boolean,
-    billingReady: Boolean,
-    billingMessage: String,
-    premiumPriceLabel: String,
-    locationText: String,
-    usageText: String,
-    familyStatus: String,
-    familyId: String,
-    inviteCode: String,
-    familyLocationsText: String,
-    familyConsentEnabled: Boolean,
-    onFamilyAuth: (String, String, Boolean) -> Unit,
-    onCreateFamily: (String) -> Unit,
-    onJoinFamily: (String) -> Unit,
-    onFamilyConsent: (Boolean) -> Unit,
-    onStartSharing: () -> Unit,
-    onStopSharing: () -> Unit,
-    onFetchFamilyLocations: () -> Unit,
-    onLocation: () -> Unit,
-    onUpgrade: () -> Unit,
-    onRestore: () -> Unit,
-    onUsage: () -> Unit,
-    onSos: () -> Unit,
-    onNotice: (String) -> Unit,
-    permissionStatusText: String,
-    onSetupPermissions: () -> Unit,
-    onPrivacy: () -> Unit,
-    onTerms: () -> Unit,
-    onDeleteData: () -> Unit,
-    onCheckUpdate: () -> Unit
-) {
-    Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-        Column(
-            modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp)
-        ) {
-            Text("FamilyGuard: SafeCircle", style = MaterialTheme.typography.headlineLarge)
-            Text("Parent Dashboard", style = MaterialTheme.typography.titleMedium)
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
-            ) {
-                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text(if (premium) "ACTIVE PLAN: PREMIUM" else "ACTIVE PLAN: FREE", style = MaterialTheme.typography.titleLarge)
-                    Text(if (premium) "Premium active • $premiumPriceLabel" else "₹0 • Basic safety features")
-                    Text(if (premium) "App usage reports unlocked on this device." else "Upgrade to unlock app usage and screen-time reports.")
-                    if (!premium) Button(onClick = onUpgrade, modifier = Modifier.fillMaxWidth()) {
-                        Text("Upgrade • $premiumPriceLabel")
-                    }
-                    OutlinedButton(onClick = onRestore, modifier = Modifier.fillMaxWidth()) {
-                        Text("Refresh plan status")
-                    }
-                    Text(billingMessage, style = MaterialTheme.typography.bodySmall)
-                    Text("Payments are handled on the official FamilyGuard website.", style = MaterialTheme.typography.labelSmall)
-                }
-            }
-            DashboardCard("Live Location", locationText) {
-                Button(onClick = onLocation, modifier = Modifier.fillMaxWidth()) { Text("Request / refresh location") }
-            }
-            FamilySharingCard(familyStatus, familyId, inviteCode, familyLocationsText, familyConsentEnabled, premium,
-                onFamilyAuth, onCreateFamily, onJoinFamily, onFamilyConsent,
-                onStartSharing, onStopSharing, onFetchFamilyLocations)
-            DashboardCard("SOS Safety Alert", "Prepare a message in the device SMS app. Nothing is sent automatically; you review and send it yourself.") {
-                Button(onClick = onSos, modifier = Modifier.fillMaxWidth()) { Text("Prepare SOS message") }
-            }
-            DashboardCard("App Usage & Screen Time", if (premium) usageText else "Premium feature • ₹999/month") {
-                if (premium) Button(onClick = onUsage, modifier = Modifier.fillMaxWidth()) {
-                    Text("Open Usage Access settings")
-                } else OutlinedButton(onClick = onUpgrade, modifier = Modifier.fillMaxWidth()) {
-                    Text("Unlock Premium reports")
-                }
-            }
-            DashboardCard("Permission setup", "Each sensitive permission is disclosed before its Android prompt. Background location permission is not requested; optional live sharing uses a visible user-started foreground location service.") {
-                Text(permissionStatusText, style = MaterialTheme.typography.bodyMedium)
-                Button(onClick = onSetupPermissions, modifier = Modifier.fillMaxWidth()) { Text("One-Click Setup All Permissions") }
-                OutlinedButton(onClick = onSetupPermissions, modifier = Modifier.fillMaxWidth()) { Text("Retry Missing Permissions") }
-            }
-            DashboardCard("App updates", "Check the official release server. Downloads are user initiated and Android asks you to confirm installation.") {
-                OutlinedButton(onClick = onCheckUpdate, modifier = Modifier.fillMaxWidth()) { Text("Check for app updates") }
-            }
-            DashboardCard("About & Settings", "Review the policies or clear local FamilyGuard settings. Your FamilyGuard account is shared with the official website dashboard.") {
-                OutlinedButton(onClick = onPrivacy, modifier = Modifier.fillMaxWidth()) { Text("Privacy Policy") }
-                OutlinedButton(onClick = onTerms, modifier = Modifier.fillMaxWidth()) { Text("Terms of Service") }
-                OutlinedButton(onClick = onDeleteData, modifier = Modifier.fillMaxWidth()) { Text("Delete Local App Data") }
-            }
-            DashboardCard("Privacy & consent", "Location is sent to the family server only after explicit opt-in, and only while the visible foreground sharing service is running. Revoking consent stops local sharing and removes the member's last saved location. Usage reports are processed on this device.") {
-                Text("Monitoring is visible and user-controlled. The device user can revoke permissions in Android Settings at any time.", style = MaterialTheme.typography.bodySmall)
-            }
-            Text("FamilyGuard does not record calls, capture screens in the background, read private messages, or hide monitoring.", style = MaterialTheme.typography.bodySmall)
-        }
-    }
-}
-
-@Composable
-private fun DashboardCard(title: String, description: String, content: @Composable () -> Unit) {
-    Card(modifier = Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Text(title, style = MaterialTheme.typography.titleLarge)
-            Text(description, style = MaterialTheme.typography.bodyMedium)
-            content()
-        }
-    }
-}
-
-
-@Composable
-private fun FamilySharingCard(
-    status: String, familyId: String, inviteCode: String, locations: String, consentInitiallyEnabled: Boolean, premium: Boolean,
-    onAuth: (String, String, Boolean) -> Unit, onCreate: (String) -> Unit, onJoin: (String) -> Unit,
-    onConsent: (Boolean) -> Unit, onStart: () -> Unit, onStop: () -> Unit, onFetch: () -> Unit
+private fun LoginScreen(
+    message: String,
+    onLogin: (String, String) -> Unit,
+    onOpenWebsite: () -> Unit
 ) {
     var email by remember { mutableStateOf("") }
     var password by remember { mutableStateOf("") }
-    var familyName by remember { mutableStateOf("My Family") }
-    var code by remember { mutableStateOf("") }
-    var consent by remember(familyId) { mutableStateOf(consentInitiallyEnabled) }
-    DashboardCard("Family Location Sharing", "Sign in, create or join a family, then explicitly opt in. Sharing is visible and revocable.") {
-        OutlinedTextField(email, { email = it }, label = { Text("Email address") }, modifier = Modifier.fillMaxWidth())
-        OutlinedTextField(password, { password = it }, label = { Text("Password") }, visualTransformation = PasswordVisualTransformation(), modifier = Modifier.fillMaxWidth())
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Button(onClick = { onAuth(email, password, false) }, enabled = email.isNotBlank() && password.length >= 10) { Text("Sign in") }
-            OutlinedButton(onClick = { onAuth(email, password, true) }, enabled = email.isNotBlank() && password.length >= 6) { Text("Create account") }
+    Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+        Column(modifier = Modifier.fillMaxSize().padding(24.dp), verticalArrangement = Arrangement.Center) {
+            Text("FamilyGuard", style = MaterialTheme.typography.headlineLarge)
+            Spacer(Modifier.height(8.dp))
+            Text("Sign in with the account created on the official website.")
+            Spacer(Modifier.height(24.dp))
+            OutlinedTextField(email, { email = it }, label = { Text("Login ID / Email") }, modifier = Modifier.fillMaxWidth())
+            Spacer(Modifier.height(12.dp))
+            OutlinedTextField(password, { password = it }, label = { Text("Password") },
+                visualTransformation = PasswordVisualTransformation(), modifier = Modifier.fillMaxWidth())
+            Spacer(Modifier.height(16.dp))
+            Button(onClick = { onLogin(email, password) }, enabled = email.isNotBlank() && password.isNotBlank(),
+                modifier = Modifier.fillMaxWidth()) { Text("LOGIN") }
+            OutlinedButton(onClick = onOpenWebsite, modifier = Modifier.fillMaxWidth()) {
+                Text("Open FamilyGuard Website")
+            }
+            if (message.isNotBlank()) Text(message, style = MaterialTheme.typography.bodySmall)
+            Spacer(Modifier.height(12.dp))
+            Text("New accounts and Premium subscriptions are managed only on the website.",
+                style = MaterialTheme.typography.bodySmall)
         }
-        Text(status, style = MaterialTheme.typography.bodySmall)
-        OutlinedTextField(familyName, { familyName = it }, label = { Text("Family name") }, modifier = Modifier.fillMaxWidth())
-        Button(onClick = { onCreate(familyName) }, enabled = premium, modifier = Modifier.fillMaxWidth()) { Text("Create family (Premium)") }
-        if (inviteCode.isNotBlank()) Text("Invite code: " + inviteCode, style = MaterialTheme.typography.titleLarge)
-        OutlinedTextField(code, { code = it.filter(Char::isDigit).take(6) }, label = { Text("6-digit invite code") }, modifier = Modifier.fillMaxWidth())
-        OutlinedButton(onClick = { onJoin(code) }, enabled = code.length == 6, modifier = Modifier.fillMaxWidth()) { Text("Join family") }
-        if (familyId.isNotBlank()) Text("Family ID: " + familyId, style = MaterialTheme.typography.bodySmall)
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Switch(checked = consent, onCheckedChange = { consent = it; onConsent(it) })
-            Text("I explicitly consent to share my location with this family.")
+    }
+}
+
+@Composable
+private fun FamilyGuardDashboard(
+    premium: Boolean,
+    billingMessage: String,
+    usageText: String,
+    permissionStatusText: String,
+    onSetupPermissions: () -> Unit,
+    onUsage: () -> Unit,
+    onSos: () -> Unit,
+    onOpenWebsite: () -> Unit,
+    onLogout: () -> Unit,
+    onPrivacy: () -> Unit,
+    onTerms: () -> Unit
+) {
+    Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+        Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp)) {
+            Text("FamilyGuard", style = MaterialTheme.typography.headlineLarge)
+            Card(modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(if (premium) "PREMIUM ACTIVE" else "ACCOUNT SIGNED IN", style = MaterialTheme.typography.titleLarge)
+                    Text(billingMessage, style = MaterialTheme.typography.bodyMedium)
+                    Text("Manage Premium, family members and settings on the official website.",
+                        style = MaterialTheme.typography.bodySmall)
+                    Button(onClick = onOpenWebsite, modifier = Modifier.fillMaxWidth()) {
+                        Text("Open Website Dashboard")
+                    }
+                }
+            }
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text("Permission Setup", style = MaterialTheme.typography.titleLarge)
+                    Text("Review each Android permission prompt. Location sharing remains off until you explicitly enable it from the website and consent on this device.")
+                    Text(permissionStatusText, style = MaterialTheme.typography.bodyMedium)
+                    Button(onClick = onSetupPermissions, modifier = Modifier.fillMaxWidth()) {
+                        Text("ONE-CLICK PERMISSION SETUP")
+                    }
+                }
+            }
+            if (premium) Card(modifier = Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("App Usage & Screen Time", style = MaterialTheme.typography.titleLarge)
+                    Text(usageText, style = MaterialTheme.typography.bodyMedium)
+                    OutlinedButton(onClick = onUsage, modifier = Modifier.fillMaxWidth()) {
+                        Text("Open Usage Access Settings")
+                    }
+                }
+            }
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("SOS Safety Alert", style = MaterialTheme.typography.titleLarge)
+                    Text("Prepare a message in your SMS app. Review and send it yourself.")
+                    Button(onClick = onSos, modifier = Modifier.fillMaxWidth()) { Text("PREPARE SOS MESSAGE") }
+                }
+            }
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Settings", style = MaterialTheme.typography.titleLarge)
+                    OutlinedButton(onClick = onPrivacy, modifier = Modifier.fillMaxWidth()) { Text("Privacy Policy") }
+                    OutlinedButton(onClick = onTerms, modifier = Modifier.fillMaxWidth()) { Text("Terms of Service") }
+                    OutlinedButton(onClick = onLogout, modifier = Modifier.fillMaxWidth()) { Text("Log out") }
+                }
+            }
+            Text("FamilyGuard does not hide monitoring. Location sharing is optional, visible and revocable.",
+                style = MaterialTheme.typography.bodySmall)
         }
-        Button(onClick = onStart, enabled = consent && familyId.isNotBlank(), modifier = Modifier.fillMaxWidth()) { Text("Start live sharing") }
-        OutlinedButton(onClick = onStop, modifier = Modifier.fillMaxWidth()) { Text("Stop sharing and revoke consent") }
-        OutlinedButton(onClick = onFetch, modifier = Modifier.fillMaxWidth()) { Text("Refresh family locations") }
-        Text(locations, style = MaterialTheme.typography.bodySmall)
     }
 }
