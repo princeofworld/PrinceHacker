@@ -100,4 +100,14 @@ object FamilyGuardApi {
             request(BASE_URL + path, "GET", null, access)
         }
     }
+
+    fun deleteAccount(context: Context): JSONObject {
+        var access = refreshIdToken(context)
+        return try { request(BASE_URL + "/account-data", "DELETE", null, access) }
+        catch (e: IllegalStateException) {
+            if (!e.message.orEmpty().contains("expired", true) && !e.message.orEmpty().contains("invalid", true)) throw e
+            access = rotateRefreshToken(context)
+            request(BASE_URL + "/account-data", "DELETE", null, access)
+        }
+    }
 }
