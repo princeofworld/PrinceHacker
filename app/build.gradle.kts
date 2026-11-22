@@ -24,7 +24,6 @@ android {
         versionCode = 6
         versionName = "1.3.1"
         buildConfigField("String", "FAMILYGUARD_API_BASE_URL", "\"${providers.gradleProperty("familyguardApiBaseUrl").orNull ?: System.getenv("FAMILYGUARD_API_BASE_URL") ?: "https://princehacker.onrender.com"}\"")
-        buildConfigField("String", "FAMILYGUARD_VERIFY_URL", "\"${providers.gradleProperty("familyguardVerifyUrl").orNull ?: System.getenv("FAMILYGUARD_API_BASE_URL") ?: "https://princehacker.onrender.com"}\"")
     }
 
     signingConfigs {
