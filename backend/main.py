@@ -38,10 +38,7 @@ class LocationUpdate(BaseModel):
     accuracyMeters: Optional[float]=Field(default=None,ge=0,le=100000)
     batteryPercent: Optional[int]=Field(default=None,ge=0,le=100)
     capturedAt: datetime
-class SubscriptionVerify(BaseModel):
-    razorpay_subscription_id: str=Field(min_length=8,max_length=80)
-    razorpay_payment_id: str=Field(min_length=8,max_length=80)
-    razorpay_signature: str=Field(min_length=32,max_length=128)
+    familyId: str=Field(min_length=12,max_length=64)
 
 def db():
     c=sqlite3.connect(DB_PATH,timeout=15); c.row_factory=sqlite3.Row
@@ -51,6 +48,7 @@ def init_db():
     with db() as c:
         c.executescript("""
         CREATE TABLE IF NOT EXISTS users(uid TEXT PRIMARY KEY,email TEXT UNIQUE NOT NULL,password_hash TEXT NOT NULL,created REAL NOT NULL);
+        CREATE TABLE IF NOT EXISTS refresh_sessions(token_hash TEXT PRIMARY KEY,uid TEXT NOT NULL,expires REAL NOT NULL,created REAL NOT NULL,FOREIGN KEY(uid) REFERENCES users(uid) ON DELETE CASCADE);
         CREATE TABLE IF NOT EXISTS families(id TEXT PRIMARY KEY,name TEXT NOT NULL,owner_uid TEXT NOT NULL,created REAL NOT NULL);
         CREATE TABLE IF NOT EXISTS members(family_id TEXT NOT NULL,uid TEXT NOT NULL,role TEXT NOT NULL,consent INTEGER NOT NULL DEFAULT 0,consent_version TEXT,consent_at REAL,PRIMARY KEY(family_id,uid),FOREIGN KEY(family_id) REFERENCES families(id) ON DELETE CASCADE,FOREIGN KEY(uid) REFERENCES users(uid) ON DELETE CASCADE);
         CREATE TABLE IF NOT EXISTS invites(code TEXT PRIMARY KEY,family_id TEXT NOT NULL,created_by TEXT NOT NULL,expires REAL NOT NULL,used INTEGER NOT NULL DEFAULT 0);
@@ -72,7 +70,7 @@ def secret():
 def b64(x:bytes)->str: return base64.urlsafe_b64encode(x).rstrip(b"=").decode()
 def jwt_make(uid:str)->str:
     head=b64(b'{"alg":"HS256","typ":"JWT"}')
-    payload=b64(json.dumps({"sub":uid,"iat":int(time.time()),"exp":int(time.time())+43200}).encode())
+    payload=b64(json.dumps({"sub":uid,"iat":int(time.time()),"exp":int(time.time())+3600}).encode())
     msg=f"{head}.{payload}".encode()
     return f"{head}.{payload}.{b64(hmac.new(secret(),msg,hashlib.sha256).digest())}"
 def current_uid(authorization: str|None=Header(default=None))->str:
@@ -111,6 +109,14 @@ async def size_limit(request:Request,call_next):
     return await call_next(request)
 @app.get("/health")
 def health(): return {"status":"ok","service":"familyguard-api","auth":"sqlite-jwt","storage":"sqlite","locationSharing":"consent-gated"}
+def issue_auth_session(uid:str):
+    now=time.time()
+    refresh=secrets.token_urlsafe(48)
+    digest=hashlib.sha256(refresh.encode()).hexdigest()
+    with db() as c:
+        c.execute("INSERT INTO refresh_sessions(token_hash,uid,expires,created) VALUES(?,?,?,?)",(digest,uid,now+30*24*60*60,now))
+    return {"idToken":jwt_make(uid),"refreshToken":refresh,"localId":uid,"expiresIn":"3600","refreshExpiresIn":"2592000","authProvider":"FamilyGuard"}
+
 @app.post("/auth/register")
 def register(payload:AuthIn):
     email=str(payload.email).lower().strip()
@@ -119,13 +125,37 @@ def register(payload:AuthIn):
     try:
         with db() as c: c.execute("INSERT INTO users VALUES(?,?,?,?)",(uid,email,hash_password(payload.password.get_secret_value()),time.time()))
     except sqlite3.IntegrityError: raise HTTPException(409,"An account with this email already exists")
-    token=jwt_make(uid)
-    return {"idToken":token,"refreshToken":"","localId":uid,"expiresIn":"43200","authProvider":"FamilyGuard"}
+    return issue_auth_session(uid)
+
 @app.post("/auth/login")
 def login(payload:AuthIn):
     with db() as c: row=c.execute("SELECT * FROM users WHERE email=?",(str(payload.email).lower().strip(),)).fetchone()
     if not row or not check_password(payload.password.get_secret_value(),row["password_hash"]): raise HTTPException(401,"Email or password is incorrect")
-    return {"idToken":jwt_make(row["uid"]),"refreshToken":"","localId":row["uid"],"expiresIn":"43200","authProvider":"FamilyGuard"}
+    return issue_auth_session(row["uid"])
+
+@app.post("/auth/refresh")
+def refresh_auth(payload:RefreshIn):
+    now=time.time()
+    digest=hashlib.sha256(payload.refreshToken.encode()).hexdigest()
+    replacement=secrets.token_urlsafe(48)
+    replacement_hash=hashlib.sha256(replacement.encode()).hexdigest()
+    with db() as c:
+        row=c.execute("SELECT uid,expires FROM refresh_sessions WHERE token_hash=?",(digest,)).fetchone()
+        if not row:
+            raise HTTPException(401,"Refresh session is invalid. Please sign in again.")
+        if row["expires"]<=now:
+            c.execute("DELETE FROM refresh_sessions WHERE token_hash=?",(digest,))
+            raise HTTPException(401,"Refresh session expired. Please sign in again.")
+        uid=row["uid"]
+        c.execute("DELETE FROM refresh_sessions WHERE token_hash=?",(digest,))
+        c.execute("INSERT INTO refresh_sessions(token_hash,uid,expires,created) VALUES(?,?,?,?)",(replacement_hash,uid,now+30*24*60*60,now))
+    return {"idToken":jwt_make(uid),"refreshToken":replacement,"localId":uid,"expiresIn":"3600","refreshExpiresIn":"2592000","authProvider":"FamilyGuard"}
+
+@app.post("/auth/logout")
+def logout_auth(payload:RefreshIn):
+    digest=hashlib.sha256(payload.refreshToken.encode()).hexdigest()
+    with db() as c: c.execute("DELETE FROM refresh_sessions WHERE token_hash=?",(digest,))
+    return {"loggedOut":True}
 def razorpay_configured():
     return bool(os.getenv("RAZORPAY_KEY_ID") and os.getenv("RAZORPAY_KEY_SECRET") and os.getenv("RAZORPAY_PLAN_ID"))
 def razorpay_request(path: str, method: str="GET", payload: dict|None=None):
@@ -154,6 +184,74 @@ def billing_status(uid:str=Depends(current_uid)):
         sub=c.execute("SELECT subscription_id,status,updated FROM payment_subscriptions WHERE uid=? ORDER BY updated DESC LIMIT 1",(uid,)).fetchone()
     active=premium_active(c,uid)
     return {"plan":"premium" if active else "free","premium":active,"status":row["status"] if row else "free","subscriptionStatus":sub["status"] if sub else None,"updatedAt":row["updated"] if row else None,"expiresAt":row["expires_at"] if row else None}
+
+@app.post("/family/create")
+def create_family(payload:FamilyCreate,uid:str=Depends(current_uid)):
+    now=time.time()
+    family_id=secrets.token_urlsafe(18)
+    with db() as c:
+        if not premium_active(c,uid):
+            raise HTTPException(402,"Family creation requires an active Premium plan (₹999 / 30 days).")
+        c.execute("INSERT INTO families(id,name,owner_uid,created) VALUES(?,?,?,?)",(family_id,payload.displayName.strip(),uid,now))
+        c.execute("INSERT INTO members(family_id,uid,role,consent) VALUES(?,?,?,0)",(family_id,uid,"owner"))
+        code=None
+        for _ in range(10):
+            candidate=f"{secrets.randbelow(1000000):06d}"
+            try:
+                c.execute("INSERT INTO invites(code,family_id,created_by,expires,used) VALUES(?,?,?,?,0)",(candidate,family_id,uid,now+INVITE_TTL_MINUTES*60))
+                code=candidate
+                break
+            except sqlite3.IntegrityError:
+                continue
+        if code is None: raise HTTPException(503,"Could not create a unique invite code. Please retry.")
+    return {"familyId":family_id,"familyName":payload.displayName.strip(),"inviteCode":code,"expiresInSeconds":INVITE_TTL_MINUTES*60}
+
+@app.post("/family/join")
+def join_family(payload:FamilyJoin,uid:str=Depends(current_uid)):
+    now=time.time()
+    with db() as c:
+        invite=c.execute("SELECT i.*,f.name FROM invites i JOIN families f ON f.id=i.family_id WHERE i.code=?",(payload.inviteCode,)).fetchone()
+        if not invite or invite["used"] or invite["expires"]<=now:
+            raise HTTPException(404,"Invite code is invalid, expired, or already used.")
+        c.execute("INSERT OR IGNORE INTO members(family_id,uid,role,consent) VALUES(?,?,?,0)",(invite["family_id"],uid,"member"))
+        c.execute("UPDATE invites SET used=1 WHERE code=?",(payload.inviteCode,))
+    return {"familyId":invite["family_id"],"familyName":invite["name"],"locationConsentRequired":True}
+
+@app.post("/family/consent")
+def set_family_consent(payload:ConsentRequest,uid:str=Depends(current_uid)):
+    now=time.time()
+    with db() as c:
+        member=membership(c,uid,payload.familyId)
+        c.execute("UPDATE members SET consent=?,consent_version=?,consent_at=? WHERE family_id=? AND uid=?",
+                  (1 if payload.shareLocation else 0,payload.consentVersion if payload.shareLocation else None,now if payload.shareLocation else None,payload.familyId,uid))
+        if not payload.shareLocation:
+            c.execute("DELETE FROM locations WHERE family_id=? AND uid=?",(payload.familyId,uid))
+    return {"familyId":payload.familyId,"consent":payload.shareLocation,"revoked":not payload.shareLocation}
+
+@app.post("/location/update")
+def update_location(payload:LocationUpdate,uid:str=Depends(current_uid)):
+    now=time.time()
+    with db() as c:
+        member=membership(c,uid,payload.familyId)
+        if not member["consent"]:
+            raise HTTPException(403,"Location sharing requires explicit family consent.")
+        captured=payload.capturedAt.timestamp()
+        if captured>now+300 or captured<now-24*60*60:
+            raise HTTPException(400,"Location timestamp is outside the accepted time window.")
+        c.execute("""INSERT INTO locations(family_id,uid,lat,lon,accuracy,captured,battery) VALUES(?,?,?,?,?,?,?)
+        ON CONFLICT(family_id,uid) DO UPDATE SET lat=excluded.lat,lon=excluded.lon,accuracy=excluded.accuracy,captured=excluded.captured,battery=excluded.battery""",
+        (payload.familyId,uid,payload.latitude,payload.longitude,payload.accuracyMeters,captured,payload.batteryPercent))
+    return {"updated":True,"capturedAt":payload.capturedAt.isoformat(),"batteryPercent":payload.batteryPercent}
+
+@app.get("/location/family")
+def family_locations(familyId:str,uid:str=Depends(current_uid)):
+    now=time.time()
+    with db() as c:
+        membership(c,uid,familyId)
+        rows=c.execute("""SELECT l.uid,l.lat,l.lon,l.accuracy,l.captured,l.battery
+        FROM locations l JOIN members m ON m.family_id=l.family_id AND m.uid=l.uid
+        WHERE l.family_id=? AND m.consent=1 ORDER BY l.captured DESC""",(familyId,)).fetchall()
+    return {"familyId":familyId,"locations":[{"uid":r["uid"],"latitude":r["lat"],"longitude":r["lon"],"accuracyMeters":r["accuracy"],"batteryPercent":r["battery"],"capturedAt":datetime.fromtimestamp(r["captured"],timezone.utc).isoformat(),"isOnline":r["captured"]>=now-10*60} for r in rows]}
 
 @app.post("/payment/create-order")
 def payment_create_order(uid:str=Depends(current_uid)):
@@ -193,6 +291,7 @@ def payment_verify(payload:SubscriptionVerify,uid:str=Depends(current_uid)):
             c.execute("""INSERT INTO entitlements(uid,status,product_id,base_plan_id,token_hash,updated) VALUES(?,?,?,?,?,?)
             ON CONFLICT(uid) DO UPDATE SET status='verified_active',product_id=excluded.product_id,base_plan_id=excluded.base_plan_id,token_hash=excluded.token_hash,updated=excluded.updated""",
             (uid,"verified_active","familyguard_razorpay_monthly_999","monthly-999",payload.razorpay_subscription_id,now))
+            c.execute("UPDATE entitlements SET expires_at=? WHERE uid=?",(now+30*24*60*60,uid))
     return {"verified":True,"active":active,"status":status,"message":"Premium activated after Razorpay signature and subscription checks." if active else "Payment callback verified; subscription activation is still pending. Premium remains locked until Razorpay confirms the first paid cycle."}
 
 @app.post("/payment/webhook")
@@ -226,6 +325,7 @@ async def payment_webhook(request:Request):
                 c.execute("""INSERT INTO entitlements(uid,status,product_id,base_plan_id,token_hash,updated) VALUES(?,?,?,?,?,?)
                 ON CONFLICT(uid) DO UPDATE SET status='verified_active',product_id=excluded.product_id,base_plan_id=excluded.base_plan_id,token_hash=excluded.token_hash,updated=excluded.updated""",
                 (uid,"verified_active","familyguard_razorpay_monthly_999","monthly-999",sub_id,now))
+                c.execute("UPDATE entitlements SET expires_at=? WHERE uid=?",(float(entity.get("current_end") or (now+30*24*60*60)),uid))
             else:
                 c.execute("UPDATE entitlements SET status='inactive',updated=? WHERE uid=? AND token_hash=?",(now,uid,sub_id))
     return {"received":True}

@@ -1,4 +1,4 @@
-name: FamilyGuard Direct APK Release
+name: FamilyGuard APK Build
 
 on:
   push:
@@ -9,8 +9,8 @@ permissions:
   contents: write
 
 jobs:
-  release-apk:
-    name: Build and verify signed Android APK
+  build-apk:
+    name: Build and verify FamilyGuard APK
     runs-on: ubuntu-latest
     timeout-minutes: 40
     steps:
@@ -36,66 +36,86 @@ jobs:
       - name: Install Android SDK packages
         run: sdkmanager "platforms;android-36" "build-tools;36.0.0" "platform-tools"
 
-      - name: Prepare release signing key
-        shell: bash
-        env:
-          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
-          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
-          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
-        run: |
-          set -euo pipefail
-          set +x
-          if [[ -z "${ANDROID_KEYSTORE_BASE64}" || -z "${ANDROID_KEYSTORE_PASSWORD}" || -z "${ANDROID_KEY_ALIAS}" || -z "${ANDROID_KEY_PASSWORD}" ]]; then
-            echo "::error::A signed APK requires all four repository signing secrets: ANDROID_KEYSTORE_BASE64, ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS and ANDROID_KEY_PASSWORD. No unsigned file will be published as signed."
-            exit 1
-          fi
-          KEYSTORE_PATH="${RUNNER_TEMP}/familyguard-release.jks"
-          printf '%s' "${ANDROID_KEYSTORE_BASE64}" | base64 --decode > "${KEYSTORE_PATH}"
-          test -s "${KEYSTORE_PATH}"
-          chmod 600 "${KEYSTORE_PATH}"
-          echo "ANDROID_KEYSTORE_PATH=${KEYSTORE_PATH}" >> "${GITHUB_ENV}"
-
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: "8.13"
 
-      - name: Build signed APK
+      - name: Select signed release or debug fallback
+        id: build-config
+        shell: bash
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          set +x
+          if [[ -n "$KEYSTORE_B64" && -n "$KEYSTORE_PASSWORD" && -n "$KEY_ALIAS" && -n "$KEY_PASSWORD" ]]; then
+            KEYSTORE_PATH="$RUNNER_TEMP/familyguard-release.jks"
+            printf '%s' "$KEYSTORE_B64" | base64 --decode > "$KEYSTORE_PATH"
+            test -s "$KEYSTORE_PATH"
+            chmod 600 "$KEYSTORE_PATH"
+            echo "ANDROID_KEYSTORE_PATH=$KEYSTORE_PATH" >> "$GITHUB_ENV"
+            echo "build_type=release" >> "$GITHUB_OUTPUT"
+            echo "apk_path=app/build/outputs/apk/release/app-release.apk" >> "$GITHUB_OUTPUT"
+            echo "artifact_name=FamilyGuard-release-signed.apk" >> "$GITHUB_OUTPUT"
+            echo "signed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Signing secrets are not all configured; building a debug APK fallback. It is not a Play Store release."
+            echo "build_type=debug" >> "$GITHUB_OUTPUT"
+            echo "apk_path=app/build/outputs/apk/debug/app-debug.apk" >> "$GITHUB_OUTPUT"
+            echo "artifact_name=FamilyGuard-debug-unsigned.apk" >> "$GITHUB_OUTPUT"
+            echo "signed=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build APK
         env:
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
           FAMILYGUARD_API_BASE_URL: https://princehacker.onrender.com
-        run: gradle --no-daemon --stacktrace -PfamilyguardApiBaseUrl="https://princehacker.onrender.com" :app:assembleRelease
-
-      - name: Verify signed APK
-        shell: bash
+          BUILD_TYPE: ${{ steps.build-config.outputs.build_type }}
         run: |
           set -euo pipefail
-          APK="app/build/outputs/apk/release/app-release.apk"
-          test -s "${APK}"
-          APKSIGNER="$(find "${ANDROID_HOME}/build-tools" -type f -name apksigner | sort -V | tail -n 1)"
-          test -x "${APKSIGNER}"
-          "${APKSIGNER}" verify --verbose "${APK}"
-          mkdir -p release-artifacts
-          cp "${APK}" release-artifacts/FamilyGuard-release-signed.apk
-          sha256sum release-artifacts/FamilyGuard-release-signed.apk
+          command -v gradle
+          gradle --version
+          if [[ "$BUILD_TYPE" == "release" ]]; then
+            gradle --no-daemon --stacktrace -PfamilyguardApiBaseUrl="https://princehacker.onrender.com" :app:assembleRelease
+          else
+            gradle --no-daemon --stacktrace -PfamilyguardApiBaseUrl="https://princehacker.onrender.com" :app:assembleDebug
+          fi
 
-      - name: Upload APK build artifact
+      - name: Verify and stage APK
+        env:
+          APK_PATH: ${{ steps.build-config.outputs.apk_path }}
+          APK_NAME: ${{ steps.build-config.outputs.artifact_name }}
+        run: |
+          set -euo pipefail
+          test -s "$APK_PATH"
+          APKSIGNER="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner | sort -V | tail -n 1)"
+          test -x "$APKSIGNER"
+          "$APKSIGNER" verify --verbose "$APK_PATH"
+          mkdir -p release-artifacts
+          cp "$APK_PATH" "release-artifacts/$APK_NAME"
+          sha256sum "release-artifacts/$APK_NAME"
+
+      - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: FamilyGuard-Signed-APK
-          path: release-artifacts/FamilyGuard-release-signed.apk
+          name: FamilyGuard-APK
+          path: release-artifacts/*
           if-no-files-found: error
           retention-days: 30
 
-      - name: Publish signed APK release
+      - name: Publish signed release APK
+        if: ${{ steps.build-config.outputs.signed == 'true' }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          TAG="familyguard-v1.3.1-build-${GITHUB_RUN_NUMBER}"
-          gh release create "${TAG}" release-artifacts/FamilyGuard-release-signed.apk \
-            --title "FamilyGuard 1.3.1 - Build #${GITHUB_RUN_NUMBER}" \
-            --notes "Direct website APK release. APK signature was verified by apksigner in GitHub Actions. No Play Store AAB is produced."
+          TAG="familyguard-v1.3.2-build-$GITHUB_RUN_NUMBER"
+          gh release create "$TAG" release-artifacts/FamilyGuard-release-signed.apk \
+            --title "FamilyGuard 1.3.2 - Build #$GITHUB_RUN_NUMBER" \
+            --notes "Official signed FamilyGuard APK. APK signature was verified by apksigner in GitHub Actions."

@@ -6,7 +6,7 @@ import java.net.HttpURLConnection
 import java.net.URL
 
 object FamilyGuardApi {
-    private const val BASE_URL = "https://princehacker.onrender.com"
+    private const val BASE_URL = BuildConfig.FAMILYGUARD_API_BASE_URL
 
     private fun request(url: String, method: String, body: JSONObject?, token: String? = null): JSONObject {
         val connection = (URL(url).openConnection() as HttpURLConnection).apply {
@@ -38,17 +38,50 @@ object FamilyGuardApi {
             JSONObject().put("email", email).put("password", password))
     }
 
+    fun saveSession(context: Context, result: JSONObject) {
+        val expires = result.optString("expiresIn", "3600").toLongOrNull() ?: 3600L
+        context.getSharedPreferences("familyguard_family", Context.MODE_PRIVATE).edit()
+            .putString("idToken", result.getString("idToken"))
+            .putString("refreshToken", result.getString("refreshToken"))
+            .putString("uid", result.getString("localId"))
+            .putLong("tokenExpiry", System.currentTimeMillis() + expires * 1000L)
+            .apply()
+    }
+
+    private fun rotateRefreshToken(context: Context): String {
+        val prefs = context.getSharedPreferences("familyguard_family", Context.MODE_PRIVATE)
+        val refresh = prefs.getString("refreshToken", null)
+            ?: throw IllegalStateException("Your secure sign-in has expired. Please sign in again.")
+        val result = request(BASE_URL + "/auth/refresh", "POST", JSONObject().put("refreshToken", refresh))
+        saveSession(context, result)
+        return result.getString("idToken")
+    }
+
     fun refreshIdToken(context: Context): String {
         val prefs = context.getSharedPreferences("familyguard_family", Context.MODE_PRIVATE)
         val saved = prefs.getString("idToken", null)
         val expiry = prefs.getLong("tokenExpiry", 0L)
         if (!saved.isNullOrBlank() && System.currentTimeMillis() < expiry - 30_000L) return saved
-        throw IllegalStateException("Your secure sign-in has expired. Please sign in again.")
+        return rotateRefreshToken(context)
     }
 
-    fun post(context: Context, path: String, body: JSONObject): JSONObject =
-        request(BASE_URL + path, "POST", body, refreshIdToken(context))
+    fun post(context: Context, path: String, body: JSONObject): JSONObject {
+        var access = refreshIdToken(context)
+        return try { request(BASE_URL + path, "POST", body, access) }
+        catch (e: IllegalStateException) {
+            if (!e.message.orEmpty().contains("expired", true) && !e.message.orEmpty().contains("invalid", true)) throw e
+            access = rotateRefreshToken(context)
+            request(BASE_URL + path, "POST", body, access)
+        }
+    }
 
-    fun get(context: Context, path: String): JSONObject =
-        request(BASE_URL + path, "GET", null, refreshIdToken(context))
+    fun get(context: Context, path: String): JSONObject {
+        var access = refreshIdToken(context)
+        return try { request(BASE_URL + path, "GET", null, access) }
+        catch (e: IllegalStateException) {
+            if (!e.message.orEmpty().contains("expired", true) && !e.message.orEmpty().contains("invalid", true)) throw e
+            access = rotateRefreshToken(context)
+            request(BASE_URL + path, "GET", null, access)
+        }
+    }
 }

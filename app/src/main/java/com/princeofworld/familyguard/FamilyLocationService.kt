@@ -53,7 +53,13 @@ class FamilyLocationService : Service(), LocationListener {
     }
 
     override fun onLocationChanged(location: Location) {
-        val familyId = getSharedPreferences("familyguard_family", MODE_PRIVATE).getString("familyId", null) ?: return
+        val prefs = getSharedPreferences("familyguard_family", MODE_PRIVATE)
+        val familyId = prefs.getString("familyId", null) ?: return
+        if (!prefs.getBoolean("locationConsent", false)) {
+            stopLocationUpdates()
+            stopSelf()
+            return
+        }
         worker.execute {
             try {
                 val battery = (getSystemService(Context.BATTERY_SERVICE) as BatteryManager)
@@ -62,6 +68,7 @@ class FamilyLocationService : Service(), LocationListener {
                     .put("latitude", location.latitude).put("longitude", location.longitude)
                     .put("accuracyMeters", location.accuracy.toDouble())
                     .put("batteryPercent", battery ?: JSONObject.NULL)
+                    .put("familyId", familyId)
                     .put("capturedAt", java.time.Instant.ofEpochMilli(location.time).toString()))
             } catch (_: Exception) {
                 // Keep the persistent notification visible; the dashboard can show API errors on refresh.

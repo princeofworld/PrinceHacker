@@ -1,6 +1,6 @@
 // Keep browser and Android authentication on the exact same API origin.
 const API_BASE="https://princehacker.onrender.com",$=id=>document.getElementById(id);
-let token=null,emailAddress="";
+let token=localStorage.getItem("fg_token")||null,refreshToken=localStorage.getItem("fg_refresh")||null,emailAddress=localStorage.getItem("fg_email")||"";
 function readableApiError(data,status){
   const detail=data?.detail??data?.message??data?.error;
   if(typeof detail==="string"&&detail.trim()) return detail;
@@ -23,21 +23,30 @@ function readableApiError(data,status){
   if(status>=500) return "FamilyGuard service is temporarily unavailable. Please try again later.";
   return status ? "Request failed (HTTP "+status+"). Please check your details and try again." : "Something went wrong. Please try again.";
 }
-async function api(path,opts={}){
+async function refreshSession(){
+  if(!refreshToken) throw new Error("Your secure sign-in has expired. Please sign in again.");
+  const response=await fetch(API_BASE+"/auth/refresh",{method:"POST",headers:{"Content-Type":"application/json","Accept":"application/json"},body:JSON.stringify({refreshToken})});
+  const data=await response.json().catch(()=>({}));
+  if(!response.ok||!data.idToken||!data.refreshToken) throw new Error(readableApiError(data,response.status));
+  token=data.idToken;refreshToken=data.refreshToken;
+  localStorage.setItem("fg_token",token);localStorage.setItem("fg_refresh",refreshToken);
+  return token;
+}
+async function api(path,opts={},retry=true){
   const headers={Accept:"application/json",...(opts.headers||{})};
   if(opts.body) headers["Content-Type"]="application/json";
   if(token) headers.Authorization="Bearer "+token;
   let res;
-  try { res=await fetch(API_BASE+path,{...opts,headers}); }
-  catch(e){ throw new Error("Could not connect to FamilyGuard. Check your internet connection and try again."); }
-  const raw=await res.text();
-  let data={};
-  if(raw){
-    try { data=JSON.parse(raw); }
-    catch { data={message:raw.slice(0,240)}; }
+  try{res=await fetch(API_BASE+path,{...opts,headers});}
+  catch(e){throw new Error("Could not connect to FamilyGuard. Check your internet connection and try again.");}
+  const raw=await res.text();let data={};
+  if(raw){try{data=JSON.parse(raw)}catch{data={message:raw.slice(0,240)}}}
+  if(res.status===401&&retry&&refreshToken&&path!=="/auth/refresh"){
+    await refreshSession();
+    return api(path,opts,false);
   }
   if(!res.ok) throw new Error(readableApiError(data,res.status));
-  if(!data||typeof data!=="object") throw new Error("FamilyGuard returned an unexpected response. Please try again.");
+  if(!data||typeof data!=="object") throw new Error("FamilyGuard returned an unexpected response.");
   return data;
 }
 function showAuth(){
@@ -64,7 +73,8 @@ async function authAction(create){
     const d=await api(create?"/auth/register":"/auth/login",{method:"POST",body:JSON.stringify({email,password})});
     if(!d.idToken||!d.localId) throw new Error("Authentication response was incomplete. Please try again.");
     token=d.idToken;emailAddress=email;
-    sessionStorage.setItem("fg_token",token);sessionStorage.setItem("fg_email",emailAddress);
+    refreshToken=d.refreshToken||null;
+    localStorage.setItem("fg_token",token);localStorage.setItem("fg_refresh",refreshToken||"");localStorage.setItem("fg_email",emailAddress);
     $("password").value="";
     showDash();
     await refreshBilling();
@@ -75,7 +85,7 @@ async function authAction(create){
   }
 }
 $("auth-form").onsubmit=e=>{e.preventDefault();authAction(false)};$("register").onclick=()=>authAction(true);
-function signOut(){token=null;emailAddress="";sessionStorage.removeItem("fg_token");sessionStorage.removeItem("fg_email");$("dashboard").classList.add("hidden");$("locations").innerHTML='<p class="muted">Enter your Family ID to load reports.</p>'}
+function signOut(){token=null;refreshToken=null;emailAddress="";localStorage.removeItem("fg_token");localStorage.removeItem("fg_refresh");localStorage.removeItem("fg_email");$("dashboard").classList.add("hidden");$("locations").innerHTML='<p class="muted">Enter your Family ID to load reports.</p>'}
 $("logout").onclick=signOut;$("clear-session").onclick=signOut;
 async function refreshBilling(){try{const s=await api("/billing/status");$("plan-status").textContent=s.premium?"Premium active"+(s.expiresAt?" · expires "+new Date(s.expiresAt*1000).toLocaleDateString():""):"Free plan";$("dashboard-upgrade").textContent=s.premium?"Premium active":"Upgrade • ₹999 / 30 days";$("dashboard-upgrade").disabled=s.premium;await refreshUtrStatus()}catch(e){$("plan-status").textContent=e.message}}
 async function refreshUtrStatus(){try{const d=await api("/payment/my-utr");if(d.payments?.length){const p=d.payments[0];$("utr-message").textContent="Latest UTR "+p.utr+": "+p.status.toUpperCase()+(p.review_note?" · "+p.review_note:"")} }catch(e){}}
@@ -86,4 +96,4 @@ $("premium-cta").onclick=checkout;$("dashboard-upgrade").onclick=checkout;
 $("create-family").onclick=async()=>{const name=$("family-name").value.trim()||"My Family";$("pairing-message").textContent="Creating family…";try{const r=await api("/family/create",{method:"POST",body:JSON.stringify({displayName:name})});$("family-id").value=r.familyId;$("invite-code").value=r.inviteCode;$("pairing-message").textContent="Family created. Invite code "+r.inviteCode+" expires in "+Math.round(r.expiresInSeconds/60)+" minutes."}catch(e){$("pairing-message").textContent=e.message}};
 $("join-family").onclick=async()=>{const code=$("invite-code").value.replace(/\D/g,"").slice(0,6);if(code.length!==6){$("pairing-message").textContent="Enter the 6-digit invite code.";return}try{const r=await api("/family/join",{method:"POST",body:JSON.stringify({inviteCode:code})});$("family-id").value=r.familyId;$("pairing-message").textContent="Joined "+(r.familyName||"family")+". Location sharing remains off until each member opts in on their device."}catch(e){$("pairing-message").textContent=e.message}};
 $("refresh").onclick=async()=>{const id=$("family-id").value.trim();if(!id){$("location-message").textContent="Enter your Family ID first.";return}try{const d=await api("/location/family?familyId="+encodeURIComponent(id));$("locations").replaceChildren();if(!(d.locations||[]).length)$("locations").innerHTML='<p class="muted">No current opted-in locations.</p>';(d.locations||[]).forEach(v=>{const card=document.createElement("div");card.className="location-item";const title=document.createElement("strong");title.textContent="Family member • "+String(v.uid).slice(0,8);const a=document.createElement("p");a.textContent="Location: "+Number(v.latitude).toFixed(5)+", "+Number(v.longitude).toFixed(5);const b=document.createElement("p");b.textContent="Status: "+(v.isOnline?"Recent check-in":"Offline / stale check-in")+" • Battery: "+(Number.isInteger(v.batteryPercent)?v.batteryPercent+"%":"Not reported");const t=document.createElement("p");t.textContent="Last check-in: "+new Date(v.capturedAt).toLocaleString();card.append(title,a,b,t);$("locations").append(card)});$("location-message").textContent="Reports refreshed."}catch(e){$("location-message").textContent=e.message}};
-(async()=>{try{await api("/health");$("connection").textContent="Service online"}catch{$("connection").textContent="Service unavailable"}if("serviceWorker"in navigator)navigator.serviceWorker.register("/sw.js").catch(()=>{});const saved=sessionStorage.getItem("fg_token");if(saved){token=saved;emailAddress=sessionStorage.getItem("fg_email")||"";try{await api("/health");showDash();await refreshBilling()}catch{signOut()}}})();
+(async()=>{try{await api("/health");$("connection").textContent="Service online"}catch{$("connection").textContent="Service unavailable"}if("serviceWorker"in navigator)navigator.serviceWorker.register("/sw.js").catch(()=>{});const saved=localStorage.getItem("fg_token");if(saved){token=saved;refreshToken=localStorage.getItem("fg_refresh")||null;emailAddress=localStorage.getItem("fg_email")||"";try{await api("/health");showDash();await refreshBilling()}catch{signOut()}}})();

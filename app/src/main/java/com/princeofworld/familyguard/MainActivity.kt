@@ -228,12 +228,7 @@ class MainActivity : ComponentActivity() {
     private fun authenticateFamily(email: String, password: String, create: Boolean) {
         runFamilyTask {
             val result = FamilyGuardApi.authenticate(email.trim(), password, create)
-            val expires = result.optString("expiresIn", "3600").toLongOrNull() ?: 3600L
-            getSharedPreferences("familyguard_family", MODE_PRIVATE).edit()
-                .putString("idToken", result.getString("idToken"))
-                .putString("refreshToken", result.getString("refreshToken"))
-                .putString("uid", result.getString("localId"))
-                .putLong("tokenExpiry", System.currentTimeMillis() + expires * 1000L).apply()
+            FamilyGuardApi.saveSession(this, result)
             "FamilyGuard account " + (if (create) "created" else "signed in")
         }
     }
@@ -316,7 +311,9 @@ class MainActivity : ComponentActivity() {
             val array = result.optJSONArray("locations")
             val rows = (0 until (array?.length() ?: 0)).map { i ->
                 val item = array!!.getJSONObject(i)
-                "Member " + item.optString("uid").take(8) + ": %.5f, %.5f".format(item.optDouble("latitude"), item.optDouble("longitude"))
+                "Member " + item.optString("uid").take(8) + ": %.5f, %.5f".format(item.optDouble("latitude"), item.optDouble("longitude")) +
+                    " • Battery " + (if (item.isNull("batteryPercent")) "N/A" else item.optInt("batteryPercent").toString() + "%") +
+                    " • " + if (item.optBoolean("isOnline")) "Online" else "Last check-in stale"
             }
             familyLocationsText = if (rows.isEmpty()) "No opted-in family locations available." else rows.joinToString("\n")
             "Family locations refreshed."
