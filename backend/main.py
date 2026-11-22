@@ -162,9 +162,26 @@ def membership(c,uid,fid):
     row=c.execute("SELECT * FROM members WHERE uid=? AND family_id=?",(uid,fid)).fetchone()
     if not row: raise HTTPException(403,"You are not a member of this family")
     return row
+TRIAL_SECONDS=3*24*60*60
+
 def premium_active(c,uid):
+    now=time.time()
     row=c.execute("SELECT status,expires_at FROM entitlements WHERE uid=?",(uid,)).fetchone()
-    return bool(row and row["status"]=="verified_active" and (row["expires_at"] is None or row["expires_at"]>time.time()))
+    if row and row["status"]=="verified_active" and (row["expires_at"] is None or row["expires_at"]>now):
+        return True
+    user=c.execute("SELECT created FROM users WHERE uid=?",(uid,)).fetchone()
+    return bool(user and now-float(user["created"])<TRIAL_SECONDS)
+
+def trial_status(c,uid):
+    user=c.execute("SELECT created FROM users WHERE uid=?",(uid,)).fetchone()
+    if not user: return {"active":False,"endsAt":None,"secondsRemaining":0}
+    end=float(user["created"])+TRIAL_SECONDS
+    remaining=max(0,int(end-time.time()))
+    return {"active":remaining>0,"endsAt":end,"secondsRemaining":remaining}
+
+class _NullContext:
+    def __enter__(self): return self
+    def __exit__(self,*args): return False
 
 @app.middleware("http")
 async def size_limit(request:Request,call_next):
@@ -247,7 +264,9 @@ def billing_status(uid:str=Depends(current_uid)):
         row=c.execute("SELECT status,updated,expires_at FROM entitlements WHERE uid=?",(uid,)).fetchone()
         sub=c.execute("SELECT subscription_id,status,updated FROM payment_subscriptions WHERE uid=? ORDER BY updated DESC LIMIT 1",(uid,)).fetchone()
         active=premium_active(c,uid)
-    return {"plan":"premium" if active else "free","premium":active,"status":row["status"] if row else "free","subscriptionStatus":sub["status"] if sub else None,"updatedAt":row["updated"] if row else None,"expiresAt":row["expires_at"] if row else None}
+        trial=trial_status(c,uid)
+        paid=bool(row and row["status"]=="verified_active" and (row["expires_at"] is None or row["expires_at"]>time.time()))
+    return {"plan":"premium" if paid else ("trial" if trial["active"] else "free"),"premium":active,"trial":trial,"status":row["status"] if row else ("trial" if trial["active"] else "free"),"subscriptionStatus":sub["status"] if sub else None,"updatedAt":row["updated"] if row else None,"expiresAt":row["expires_at"] if row else None}
 
 @app.post("/family/create")
 def create_family(payload:FamilyCreate,uid:str=Depends(current_uid)):
