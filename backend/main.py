@@ -386,9 +386,13 @@ def create_family(payload:FamilyCreate,uid:str=Depends(current_uid)):
 def join_family(payload:FamilyJoin,request:Request,uid:str=Depends(current_uid)):
     now=time.time()
     ip=request.client.host if request.client else "unknown"
+    # Commit rate-limit counters before validating the invite. Invalid-code
+    # responses must not roll back the counters, or brute-force attempts bypass
+    # the limit on both SQLite and PostgreSQL.
     with db() as c:
         enforce_rate_limit(c,"invite:ip:"+ip,30)
         enforce_rate_limit(c,"invite:user:"+uid+":"+ip,8)
+    with db() as c:
         invite=c.execute("SELECT i.*,f.name FROM invites i JOIN families f ON f.id=i.family_id WHERE i.code=?",(payload.inviteCode,)).fetchone()
         if not invite or invite["used"] or invite["expires"]<=now:
             raise HTTPException(404,"Invite code is invalid, expired, or already used.")
