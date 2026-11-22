@@ -27,7 +27,7 @@ Every participating device user must separately opt in to location sharing. No f
 ## Data retention and deletion
 - Location records older than ten minutes are not returned by the family-location API; they may remain in the database until replaced or deleted.
 - Revoking consent deletes that member's current location record.
-- The authenticated account-data deletion endpoint deletes the account and related records covered by database foreign-key relationships. Some orphaned family metadata may require administrative cleanup.
+- Users can delete their account in Android Settings within FamilyGuard or from the signed-in website dashboard. Account deletion removes the account, device registrations, UTR review records and memberships; an owned family is transferred to a remaining member or deleted if empty.
 - Invite codes expire after fifteen minutes and can be redeemed once.
 - Locally calculated app-usage summaries are not uploaded to the service.
 - UPI UTR submissions and review records are retained with the account until account deletion or required fraud-prevention retention expires. Direct UPI is a one-time payment and does not create a recurring mandate. Direct UPI payments do not create recurring mandates. Records independently held by a UPI app or bank remain subject to that provider's retention practices.
