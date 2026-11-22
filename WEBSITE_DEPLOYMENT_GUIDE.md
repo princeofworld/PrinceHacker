@@ -12,10 +12,12 @@ The FastAPI service serves the public website from `web/` at the root path and s
 4. Open your domain registrar's DNS settings and add those exact records. Wait until Render reports the domain as verified and HTTPS is active.
 5. The website uses same-origin API requests, so the PWA dashboard also works on the custom domain. The Android app continues to use the Render service URL unless its API base URL is changed in a later build.
 
-## Razorpay recurring subscription configuration
+## Optional legacy Razorpay recurring subscription configuration (disabled by default)
+
+The current FamilyGuard payment model is direct one-time UPI with Admin bank-statement verification. Legacy Razorpay routes are disabled unless `RAZORPAY_ENABLED=true` is explicitly configured. Leave this flag false when using PhonePe/Google Pay UPI. The remaining provider setup instructions below are for a future authorized migration only.
 A parent/legal guardian or authorized business representative must own and manage the payment-provider merchant account and confirm applicable legal, tax, consumer-protection and recurring-mandate requirements. Never put API secrets in source code, public GitHub files, the APK or browser JavaScript.
 
-Configure these variables in **Render Dashboard → Service → Environment** only after the merchant account and monthly plan have been approved:
+Only an authorized business operator should enable this legacy option after opening a merchant account and reviewing applicable recurring-mandate requirements. Configure `RAZORPAY_ENABLED=true` plus these variables in **Render Dashboard → Service → Environment** only after the merchant account and monthly plan have been approved:
 - `RAZORPAY_KEY_ID` — public checkout key ID (still configure server-side).
 - `RAZORPAY_KEY_SECRET` — private API/signature secret.
 - `RAZORPAY_PLAN_ID` — ID of the Razorpay plan set to INR 999 and monthly.
