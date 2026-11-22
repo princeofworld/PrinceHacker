@@ -409,6 +409,34 @@ def require_admin(credentials: HTTPBasicCredentials|None=Depends(admin_basic)):
         raise HTTPException(401,"Admin sign-in required",headers={"WWW-Authenticate":"Basic"})
     return username
 
+def telegram_notify(message: str) -> bool:
+    """Best-effort admin alert; Telegram outages never change payment state."""
+    token=os.getenv("TELEGRAM_BOT_TOKEN","").strip()
+    chat_id=os.getenv("TELEGRAM_ADMIN_CHAT_ID","").strip()
+    if not token or not chat_id:
+        return False
+    body=json.dumps({"chat_id":chat_id,"text":message[:3900],"disable_web_page_preview":True}).encode()
+    req=urllib.request.Request(
+        "https://api.telegram.org/bot"+token+"/sendMessage",
+        data=body,
+        method="POST",
+        headers={"Content-Type":"application/json","Accept":"application/json"},
+    )
+    try:
+        with urllib.request.urlopen(req,timeout=8) as response:
+            result=json.loads(response.read().decode())
+            return bool(result.get("ok"))
+    except Exception:
+        return False
+
+@app.post("/admin/api/telegram/test")
+def telegram_test(_:str=Depends(require_admin)):
+    if not os.getenv("TELEGRAM_BOT_TOKEN","").strip() or not os.getenv("TELEGRAM_ADMIN_CHAT_ID","").strip():
+        raise HTTPException(503,"Set TELEGRAM_BOT_TOKEN and TELEGRAM_ADMIN_CHAT_ID in Render Environment.")
+    if not telegram_notify("✅ FamilyGuard Telegram test successful. Admin payment alerts are connected."):
+        raise HTTPException(502,"Telegram could not deliver the test message. Check the bot token, chat ID, and that you pressed START on your bot.")
+    return {"sent":True,"message":"Telegram test message sent."}
+
 @app.get("/payment/upi-config")
 def upi_payment_config():
     upi_id=os.getenv("ADMIN_UPI_ID","").strip()
@@ -428,6 +456,8 @@ def submit_utr(payload:UtrSubmission,uid:str=Depends(current_uid)):
         if c.execute("SELECT 1 FROM utr_payments WHERE uid=? AND status='pending' LIMIT 1",(uid,)).fetchone():
             raise HTTPException(409,"You already have a UTR awaiting review.")
         c.execute("INSERT INTO utr_payments(id,uid,utr,amount_paise,status,created) VALUES(?,?,?,?,?,?)",(payment_id,uid,payload.utr,99900,"pending",now))
+        account=c.execute("SELECT email FROM users WHERE uid=?",(uid,)).fetchone()
+    telegram_notify("🟠 FamilyGuard: New UTR submitted\\nAmount: ₹999\\nUTR: "+payload.utr+"\\nAccount: "+(account["email"] if account else uid)+"\\nStatus: Pending manual bank verification")
     return {"submitted":True,"paymentId":payment_id,"status":"pending","message":"UTR submitted for manual bank-statement verification. Premium is not active yet."}
 
 @app.get("/payment/my-utr")
@@ -453,7 +483,7 @@ class AdminReview(BaseModel):
 def admin_approve_utr(payment_id:str,payload:AdminReview,_:str=Depends(require_admin)):
     now=time.time()
     with db() as c:
-        row=c.execute("SELECT * FROM utr_payments WHERE id=?",(payment_id,)).fetchone()
+        row=c.execute("SELECT p.*,u.email FROM utr_payments p JOIN users u ON u.uid=p.uid WHERE p.id=?",(payment_id,)).fetchone()
         if not row: raise HTTPException(404,"Payment request not found")
         if row["status"]!="pending": raise HTTPException(409,"This request has already been reviewed")
         c.execute("UPDATE utr_payments SET status='approved',reviewed=?,review_note=? WHERE id=?",(now,payload.note or "Verified against bank statement",payment_id))
@@ -461,15 +491,17 @@ def admin_approve_utr(payment_id:str,payload:AdminReview,_:str=Depends(require_a
         c.execute("""INSERT INTO entitlements(uid,status,product_id,base_plan_id,token_hash,updated,expires_at) VALUES(?,?,?,?,?,?,?)
         ON CONFLICT(uid) DO UPDATE SET status='verified_active',product_id=excluded.product_id,base_plan_id=excluded.base_plan_id,token_hash=excluded.token_hash,updated=excluded.updated,expires_at=excluded.expires_at""",
         (row["uid"],"verified_active","familyguard_upi_manual_999","30-days","upi:"+row["utr"],now,expires))
+    telegram_notify("✅ FamilyGuard: UTR approved\\nAmount: ₹999\\nUTR: "+row["utr"]+"\\nAccount: "+row["email"]+"\\nPremium: Active for 30 days")
     return {"approved":True,"message":"UPI payment approved. Premium enabled for 30 days."}
 
 @app.post("/admin/api/payments/{payment_id}/reject")
 def admin_reject_utr(payment_id:str,payload:AdminReview,_:str=Depends(require_admin)):
     with db() as c:
-        row=c.execute("SELECT status FROM utr_payments WHERE id=?",(payment_id,)).fetchone()
+        row=c.execute("SELECT p.status,p.utr,u.email FROM utr_payments p JOIN users u ON u.uid=p.uid WHERE p.id=?",(payment_id,)).fetchone()
         if not row: raise HTTPException(404,"Payment request not found")
         if row["status"]!="pending": raise HTTPException(409,"This request has already been reviewed")
         c.execute("UPDATE utr_payments SET status='rejected',reviewed=?,review_note=? WHERE id=?",(time.time(),payload.note or "Payment could not be verified",payment_id))
+    telegram_notify("❌ FamilyGuard: UTR rejected\\nUTR: "+row["utr"]+"\\nAccount: "+row["email"]+"\\nReason: "+(payload.note or "Payment could not be verified"))
     return {"rejected":True,"message":"UTR rejected. Premium was not granted."}
 
 @app.get("/app/latest-version")
