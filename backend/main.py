@@ -49,6 +49,9 @@ class SubscriptionVerify(BaseModel):
 class AuthIn(BaseModel):
     email: EmailStr
     password: SecretStr=Field(min_length=10,max_length=128)
+class PasswordChangeIn(BaseModel):
+    currentPassword: SecretStr=Field(min_length=1,max_length=128)
+    newPassword: SecretStr=Field(min_length=10,max_length=128)
 class FamilyCreate(BaseModel):
     displayName: str=Field(min_length=1,max_length=60)
 class FamilyJoin(BaseModel):
@@ -118,7 +121,8 @@ def init_db():
     with db() as c:
         c.executescript("""
         CREATE TABLE IF NOT EXISTS users(uid TEXT PRIMARY KEY,email TEXT UNIQUE NOT NULL,password_hash TEXT NOT NULL,created REAL NOT NULL);
-        CREATE TABLE IF NOT EXISTS refresh_sessions(token_hash TEXT PRIMARY KEY,uid TEXT NOT NULL,expires REAL NOT NULL,created REAL NOT NULL,FOREIGN KEY(uid) REFERENCES users(uid) ON DELETE CASCADE);
+        CREATE TABLE IF NOT EXISTS refresh_sessions(token_hash TEXT PRIMARY KEY,uid TEXT NOT NULL,expires REAL NOT NULL,created REAL NOT NULL,access_token_hash TEXT,FOREIGN KEY(uid) REFERENCES users(uid) ON DELETE CASCADE);
+        CREATE TABLE IF NOT EXISTS rate_limits(bucket_key TEXT PRIMARY KEY,window_start REAL NOT NULL,hits INTEGER NOT NULL);
         CREATE TABLE IF NOT EXISTS families(id TEXT PRIMARY KEY,name TEXT NOT NULL,owner_uid TEXT NOT NULL,created REAL NOT NULL);
         CREATE TABLE IF NOT EXISTS members(family_id TEXT NOT NULL,uid TEXT NOT NULL,role TEXT NOT NULL,consent INTEGER NOT NULL DEFAULT 0,consent_version TEXT,consent_at REAL,PRIMARY KEY(family_id,uid),FOREIGN KEY(family_id) REFERENCES families(id) ON DELETE CASCADE,FOREIGN KEY(uid) REFERENCES users(uid) ON DELETE CASCADE);
         CREATE TABLE IF NOT EXISTS invites(code TEXT PRIMARY KEY,family_id TEXT NOT NULL,created_by TEXT NOT NULL,expires REAL NOT NULL,used INTEGER NOT NULL DEFAULT 0);
@@ -130,6 +134,9 @@ def init_db():
         CREATE TABLE IF NOT EXISTS payment_subscriptions(subscription_id TEXT PRIMARY KEY,uid TEXT NOT NULL,status TEXT NOT NULL,created REAL NOT NULL,updated REAL NOT NULL,FOREIGN KEY(uid) REFERENCES users(uid) ON DELETE CASCADE);
         CREATE TABLE IF NOT EXISTS utr_payments(id TEXT PRIMARY KEY,uid TEXT NOT NULL,utr TEXT NOT NULL UNIQUE,amount_paise INTEGER NOT NULL,status TEXT NOT NULL,created REAL NOT NULL,reviewed REAL,review_note TEXT,FOREIGN KEY(uid) REFERENCES users(uid) ON DELETE CASCADE);
         """)
+        refresh_columns={r["name"] for r in c.execute("PRAGMA table_info(refresh_sessions)").fetchall()}
+        if "access_token_hash" not in refresh_columns:
+            c.execute("ALTER TABLE refresh_sessions ADD COLUMN access_token_hash TEXT")
         columns={r["name"] for r in c.execute("PRAGMA table_info(locations)").fetchall()}
         if "battery" not in columns: c.execute("ALTER TABLE locations ADD COLUMN battery INTEGER")
         entitlement_columns={r["name"] for r in c.execute("PRAGMA table_info(entitlements)").fetchall()}
@@ -147,16 +154,35 @@ def jwt_make(uid:str)->str:
     return f"{head}.{payload}.{b64(hmac.new(secret(),msg,hashlib.sha256).digest())}"
 def current_uid(authorization: str|None=Header(default=None))->str:
     if not authorization or not authorization.startswith("Bearer "): raise HTTPException(401,"Bearer access token required")
+    token=authorization[7:]
     try:
-        h,p,s=authorization[7:].split("."); msg=f"{h}.{p}".encode()
+        h,p,s=token.split("."); msg=f"{h}.{p}".encode()
         if not hmac.compare_digest(b64(hmac.new(secret(),msg,hashlib.sha256).digest()),s): raise ValueError()
         claims=json.loads(base64.urlsafe_b64decode(p+"="*((4-len(p)%4)%4)))
-        if int(claims["exp"])<time.time(): raise ValueError()
+        now=time.time()
+        if int(claims["exp"])<now: raise ValueError()
         uid=claims["sub"]
+        token_hash=hashlib.sha256(token.encode()).hexdigest()
         with db() as c:
-            if not c.execute("SELECT 1 FROM users WHERE uid=?",(uid,)).fetchone(): raise ValueError()
+            session=c.execute("SELECT 1 FROM refresh_sessions WHERE uid=? AND access_token_hash=? AND expires>?",(uid,token_hash,now)).fetchone()
+            if not session or not c.execute("SELECT 1 FROM users WHERE uid=?",(uid,)).fetchone(): raise ValueError()
         return uid
-    except Exception: raise HTTPException(401,"Invalid or expired access token")
+    except Exception: raise HTTPException(401,"Invalid, revoked, or expired access token")
+
+def enforce_rate_limit(c,bucket_key:str,limit:int,window_seconds:int=900):
+    """Atomic database-backed fixed-window limit shared by workers and restarts."""
+    now=time.time()
+    row=c.execute(
+        """INSERT INTO rate_limits(bucket_key,window_start,hits) VALUES(?,?,1)
+        ON CONFLICT(bucket_key) DO UPDATE SET
+          window_start=CASE WHEN rate_limits.window_start<=? THEN excluded.window_start ELSE rate_limits.window_start END,
+          hits=CASE WHEN rate_limits.window_start<=? THEN 1 ELSE rate_limits.hits+1 END
+        RETURNING hits""",
+        (bucket_key,now,now-window_seconds,now-window_seconds),
+    ).fetchone()
+    c.execute("DELETE FROM rate_limits WHERE window_start<?",(now-2*window_seconds,))
+    if int(row["hits"])>limit:
+        raise HTTPException(429,"Too many attempts. Please wait before trying again.",headers={"Retry-After":str(window_seconds)})
 def hash_password(password:str,salt:bytes|None=None)->str:
     salt=salt or secrets.token_bytes(16)
     digest=hashlib.scrypt(password.encode(),salt=salt,n=2**14,r=8,p=1,dklen=32)
@@ -212,10 +238,12 @@ def health():
 def issue_auth_session(uid:str):
     now=time.time()
     refresh=secrets.token_urlsafe(48)
+    access=jwt_make(uid)
     digest=hashlib.sha256(refresh.encode()).hexdigest()
+    access_hash=hashlib.sha256(access.encode()).hexdigest()
     with db() as c:
-        c.execute("INSERT INTO refresh_sessions(token_hash,uid,expires,created) VALUES(?,?,?,?)",(digest,uid,now+30*24*60*60,now))
-    return {"idToken":jwt_make(uid),"refreshToken":refresh,"localId":uid,"expiresIn":"3600","refreshExpiresIn":"2592000","authProvider":"FamilyGuard"}
+        c.execute("INSERT INTO refresh_sessions(token_hash,uid,expires,created,access_token_hash) VALUES(?,?,?,?,?)",(digest,uid,now+30*24*60*60,now,access_hash))
+    return {"idToken":access,"refreshToken":refresh,"localId":uid,"expiresIn":"3600","refreshExpiresIn":"2592000","authProvider":"FamilyGuard"}
 
 @app.post("/auth/register")
 def register(payload:AuthIn):
@@ -228,8 +256,13 @@ def register(payload:AuthIn):
     return issue_auth_session(uid)
 
 @app.post("/auth/login")
-def login(payload:AuthIn):
-    with db() as c: row=c.execute("SELECT * FROM users WHERE email=?",(str(payload.email).lower().strip(),)).fetchone()
+def login(payload:AuthIn,request:Request):
+    email=str(payload.email).lower().strip()
+    ip=request.client.host if request.client else "unknown"
+    with db() as c:
+        enforce_rate_limit(c,"login:ip:"+ip,40)
+        enforce_rate_limit(c,"login:identity:"+ip+":"+email,8)
+        row=c.execute("SELECT * FROM users WHERE email=?",(email,)).fetchone()
     if not row or not check_password(payload.password.get_secret_value(),row["password_hash"]): raise HTTPException(401,"Email or password is incorrect")
     return issue_auth_session(row["uid"])
 
@@ -248,14 +281,30 @@ def refresh_auth(payload:RefreshIn):
             raise HTTPException(401,"Refresh session expired. Please sign in again.")
         uid=row["uid"]
         c.execute("DELETE FROM refresh_sessions WHERE token_hash=?",(digest,))
-        c.execute("INSERT INTO refresh_sessions(token_hash,uid,expires,created) VALUES(?,?,?,?)",(replacement_hash,uid,now+30*24*60*60,now))
-    return {"idToken":jwt_make(uid),"refreshToken":replacement,"localId":uid,"expiresIn":"3600","refreshExpiresIn":"2592000","authProvider":"FamilyGuard"}
+        access=jwt_make(uid)
+        access_hash=hashlib.sha256(access.encode()).hexdigest()
+        c.execute("INSERT INTO refresh_sessions(token_hash,uid,expires,created,access_token_hash) VALUES(?,?,?,?,?)",(replacement_hash,uid,now+30*24*60*60,now,access_hash))
+    return {"idToken":access,"refreshToken":replacement,"localId":uid,"expiresIn":"3600","refreshExpiresIn":"2592000","authProvider":"FamilyGuard"}
 
 @app.post("/auth/logout")
 def logout_auth(payload:RefreshIn):
     digest=hashlib.sha256(payload.refreshToken.encode()).hexdigest()
     with db() as c: c.execute("DELETE FROM refresh_sessions WHERE token_hash=?",(digest,))
     return {"loggedOut":True}
+
+@app.post("/auth/change-password")
+def change_password(payload:PasswordChangeIn,uid:str=Depends(current_uid)):
+    with db() as c:
+        user=c.execute("SELECT password_hash FROM users WHERE uid=?",(uid,)).fetchone()
+        if not user or not check_password(payload.currentPassword.get_secret_value(),user["password_hash"]):
+            raise HTTPException(401,"Current password is incorrect")
+        if payload.currentPassword.get_secret_value()==payload.newPassword.get_secret_value():
+            raise HTTPException(400,"New password must be different from the current password")
+        c.execute("UPDATE users SET password_hash=? WHERE uid=?",(hash_password(payload.newPassword.get_secret_value()),uid))
+        # Revoke every device/session for this account after a credential change.
+        c.execute("DELETE FROM refresh_sessions WHERE uid=?",(uid,))
+    return {"passwordChanged":True,"sessionsRevoked":True,"message":"Password changed. Please sign in again on your devices."}
+
 def razorpay_configured():
     return bool(os.getenv("RAZORPAY_KEY_ID") and os.getenv("RAZORPAY_KEY_SECRET") and os.getenv("RAZORPAY_PLAN_ID"))
 def razorpay_request(path: str, method: str="GET", payload: dict|None=None):
@@ -334,9 +383,12 @@ def create_family(payload:FamilyCreate,uid:str=Depends(current_uid)):
     return {"familyId":family_id,"familyName":payload.displayName.strip(),"inviteCode":code,"expiresInSeconds":INVITE_TTL_MINUTES*60}
 
 @app.post("/family/join")
-def join_family(payload:FamilyJoin,uid:str=Depends(current_uid)):
+def join_family(payload:FamilyJoin,request:Request,uid:str=Depends(current_uid)):
     now=time.time()
+    ip=request.client.host if request.client else "unknown"
     with db() as c:
+        enforce_rate_limit(c,"invite:ip:"+ip,30)
+        enforce_rate_limit(c,"invite:user:"+uid+":"+ip,8)
         invite=c.execute("SELECT i.*,f.name FROM invites i JOIN families f ON f.id=i.family_id WHERE i.code=?",(payload.inviteCode,)).fetchone()
         if not invite or invite["used"] or invite["expires"]<=now:
             raise HTTPException(404,"Invite code is invalid, expired, or already used.")
