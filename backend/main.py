@@ -633,7 +633,12 @@ def submit_utr(payload:UtrSubmission,uid:str=Depends(current_uid)):
             raise HTTPException(409,"This UTR has already been submitted.")
         if c.execute("SELECT 1 FROM utr_payments WHERE uid=? AND status='pending' LIMIT 1",(uid,)).fetchone():
             raise HTTPException(409,"You already have a UTR awaiting review.")
-        c.execute("INSERT INTO utr_payments(id,uid,utr,amount_paise,status,created) VALUES(?,?,?,?,?,?)",(payment_id,uid,payload.utr,99900,"pending",now))
+        try:
+            # The UNIQUE constraint is the final guard against simultaneous
+            # duplicate submissions across workers and database connections.
+            c.execute("INSERT INTO utr_payments(id,uid,utr,amount_paise,status,created) VALUES(?,?,?,?,?,?)",(payment_id,uid,payload.utr,99900,"pending",now))
+        except DB_INTEGRITY_ERRORS:
+            raise HTTPException(409,"This UTR has already been submitted.")
         account=c.execute("SELECT email FROM users WHERE uid=?",(uid,)).fetchone()
     telegram_notify("🟠 FamilyGuard: New UTR submitted\nAmount: ₹999\nUTR: "+payload.utr+"\nAccount: "+(account["email"] if account else uid)+"\nStatus: Pending manual bank verification")
     return {"submitted":True,"paymentId":payment_id,"status":"pending","message":"UTR submitted for manual bank-statement verification. Premium is not active yet."}
