@@ -10,6 +10,7 @@ import android.location.Location
 import android.location.LocationListener
 import android.location.LocationManager
 import android.os.Build
+import android.os.BatteryManager
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
 import org.json.JSONObject
@@ -55,9 +56,12 @@ class FamilyLocationService : Service(), LocationListener {
         val familyId = getSharedPreferences("familyguard_family", MODE_PRIVATE).getString("familyId", null) ?: return
         worker.execute {
             try {
+                val battery = (getSystemService(Context.BATTERY_SERVICE) as BatteryManager)
+                    .getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY).takeIf { it in 0..100 }
                 FamilyGuardApi.post(this, "/location/update", JSONObject()
                     .put("latitude", location.latitude).put("longitude", location.longitude)
                     .put("accuracyMeters", location.accuracy.toDouble())
+                    .put("batteryPercent", battery ?: JSONObject.NULL)
                     .put("capturedAt", java.time.Instant.ofEpochMilli(location.time).toString()))
             } catch (_: Exception) {
                 // Keep the persistent notification visible; the dashboard can show API errors on refresh.
