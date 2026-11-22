@@ -152,6 +152,47 @@ def test_utr_validation_rejects_non_12_digit_values(api):
         response = client.post("/payment/submit-utr", headers=headers, json={"utr": value})
         assert response.status_code == 422
 
+
+
+def test_account_deletion_removes_personal_records_and_transfers_owned_family(api):
+    main, client = api
+    _, owner, owner_headers = register(client)
+    _, member, member_headers = register(client)
+
+    family = client.post("/family/create", headers=owner_headers, json={"displayName": "Shared family"})
+    assert family.status_code == 200, family.text
+    family_id = family.json()["familyId"]
+    joined = client.post("/family/join", headers=member_headers, json={"inviteCode": family.json()["inviteCode"]})
+    assert joined.status_code == 200, joined.text
+
+    submitted = submit_utr(client, owner_headers, "111222333444")
+    assert submitted.status_code == 200, submitted.text
+
+    deleted = client.delete("/account-data", headers=owner_headers)
+    assert deleted.status_code == 200, deleted.text
+    assert deleted.json()["billingManagedBy"] == "manual_upi"
+    assert client.get("/account/profile", headers=owner_headers).status_code == 401
+
+    remaining = client.get("/family/mine", headers=member_headers)
+    assert remaining.status_code == 200, remaining.text
+    family_after = next(f for f in remaining.json()["families"] if f["familyId"] == family_id)
+    assert family_after["ownerUid"] == member["localId"]
+    assert family_after["myRole"] == "owner"
+
+    with main.db() as conn:
+        assert conn.execute("SELECT 1 FROM users WHERE uid=?", (owner["localId"],)).fetchone() is None
+        assert conn.execute("SELECT 1 FROM utr_payments WHERE id=?", (submitted.json()["paymentId"],)).fetchone() is None
+
+
+def test_public_privacy_and_terms_documents_are_served(api):
+    _, client = api
+    privacy_response = client.get("/PRIVACY_POLICY.md")
+    terms_response = client.get("/TERMS_OF_SERVICE.md")
+    assert privacy_response.status_code == 200
+    assert "foreground service" in privacy_response.text.lower()
+    assert terms_response.status_code == 200
+    assert "direct upi" in terms_response.text.lower()
+
 def test_logout_revokes_only_the_logged_out_device_session(api):
     email, first, first_headers = register(api[1])
     second = api[1].post("/auth/login", json={"email": email, "password": "Correct-Horse-42!"})
