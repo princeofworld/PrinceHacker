@@ -227,6 +227,8 @@ def test_encrypted_backup_download_and_restore_round_trip(api, monkeypatch):
 
 def test_backup_requires_valid_encryption_key(api, monkeypatch):
     main, client = api
+    monkeypatch.setenv("ADMIN_PANEL_USERNAME", admin_auth()[0])
+    monkeypatch.setenv("ADMIN_PANEL_PASSWORD", admin_auth()[1])
     monkeypatch.delenv("BACKUP_ENCRYPTION_KEY", raising=False)
     response = client.get("/admin/api/backup", auth=admin_auth())
     assert response.status_code == 503
