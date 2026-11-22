@@ -397,7 +397,8 @@ class MainActivity : ComponentActivity() {
                 require(code in 200..299) { "Update service is temporarily unavailable." }
                 val versionData = JSONObject(connection.inputStream.bufferedReader().use { it.readText() })
                 val latestCode = versionData.optLong("versionCode", 0L)
-                val currentCode = packageManager.getPackageInfo(packageName, 0).longVersionCode
+                val currentInfo = packageManager.getPackageInfo(packageName, 0)
+                val currentCode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) currentInfo.longVersionCode else currentInfo.versionCode.toLong()
                 val apkUrl = versionData.optString("apkUrl", "")
                 runOnUiThread {
                     if (latestCode > currentCode && apkUrl.startsWith("https://")) {
