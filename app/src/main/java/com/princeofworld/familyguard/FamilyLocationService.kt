@@ -69,6 +69,7 @@ class FamilyLocationService : Service(), LocationListener {
                     .put("accuracyMeters", location.accuracy.toDouble())
                     .put("batteryPercent", battery ?: JSONObject.NULL)
                     .put("familyId", familyId)
+                    .put("deviceId", getSharedPreferences("familyguard_family", MODE_PRIVATE).getString("deviceId", null))
                     .put("capturedAt", java.time.Instant.ofEpochMilli(location.time).toString()))
             } catch (_: Exception) {
                 // Keep the persistent notification visible; the dashboard can show API errors on refresh.
