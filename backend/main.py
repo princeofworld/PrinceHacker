@@ -162,6 +162,12 @@ def init_db():
         row=c.execute("SELECT v FROM app_meta WHERE k='jwt_secret'").fetchone()
         if not row: c.execute("INSERT INTO app_meta VALUES('jwt_secret',?)",(secrets.token_urlsafe(48),))
 init_db()
+def backup_encryption_configured():
+    try:
+        return len(bytes.fromhex(os.getenv("BACKUP_ENCRYPTION_KEY","").strip()))==32
+    except ValueError:
+        return False
+
 def backup_encryption_key():
     value=os.getenv("BACKUP_ENCRYPTION_KEY","").strip()
     try:
@@ -219,7 +225,9 @@ def restore_backup_blob(blob:bytes,confirm_overwrite:bool=False):
             for row in tables[table]:
                 c.execute(statement,tuple(row[column] for column in columns))
         if not c.is_postgres:
-            c.execute("PRAGMA foreign_keys=ON")
+            violations=c.execute("PRAGMA foreign_key_check").fetchall()
+            if violations:
+                raise HTTPException(400,"Backup restore failed database foreign-key validation.")
     return {"restored":True,"createdAt":payload["created_at"],"tables":{table:len(rows) for table,rows in tables.items()}}
 
 def secret():
@@ -315,9 +323,9 @@ def health():
         warnings=[]
         if DB_KIND=="sqlite" and not DB_PATH.startswith("/var/data/"):
             warnings.append("SQLite is using a local path; verify a persistent disk is mounted or configure PostgreSQL.")
-        if not os.getenv("BACKUP_ENCRYPTION_KEY","").strip():
-            warnings.append("Encrypted admin backups are disabled until BACKUP_ENCRYPTION_KEY is configured.")
-        return {"status":"ok","service":"familyguard-api","auth":"database-jwt","storage":DB_KIND,"databaseConnected":True,"deviceTableReady":table_ready,"locationSharing":"consent-gated","encryptedBackupsConfigured":bool(os.getenv("BACKUP_ENCRYPTION_KEY","").strip()),"backupMode":"manual-admin-download","productionWarnings":warnings}
+        if not backup_encryption_configured():
+            warnings.append("Encrypted admin backups are disabled until a valid 64-character BACKUP_ENCRYPTION_KEY is configured.")
+        return {"status":"ok","service":"familyguard-api","auth":"database-jwt","storage":DB_KIND,"databaseConnected":True,"deviceTableReady":table_ready,"locationSharing":"consent-gated","encryptedBackupsConfigured":backup_encryption_configured(),"backupMode":"manual-admin-download","productionWarnings":warnings}
     except Exception:
         raise HTTPException(503,"Database connection or required schema is unavailable.")
 def issue_auth_session(uid:str):
