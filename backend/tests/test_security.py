@@ -34,13 +34,15 @@ def register(client):
 
 
 def test_logout_revokes_only_the_logged_out_device_session(api):
-    _, first, first_headers = register(api[1])
-    second_login = api[1].post("/auth/login", json={
-        "email": first["localId"] + "@invalid.test", "password": "Correct-Horse-42!"
-    })
-    # Use the real email for the second device session.
-    # Register helper's email is deliberately retained separately below.
-    assert second_login.status_code == 401
+    email, first, first_headers = register(api[1])
+    second = api[1].post("/auth/login", json={"email": email, "password": "Correct-Horse-42!"})
+    assert second.status_code == 200, second.text
+    second_headers = {"Authorization": f"Bearer {second.json()['idToken']}"}
+    logout = api[1].post("/auth/logout", json={"refreshToken": first["refreshToken"]})
+    assert logout.status_code == 200
+    assert api[1].get("/account/profile", headers=first_headers).status_code == 401
+    # Per-device logout must not invalidate another active device session.
+    assert api[1].get("/account/profile", headers=second_headers).status_code == 200
 
 
 def test_access_token_is_revoked_after_logout(api):
