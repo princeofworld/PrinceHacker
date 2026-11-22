@@ -605,7 +605,7 @@ private fun FamilyGuardDashboard(
                         Text("Refresh plan status")
                     }
                     Text(billingMessage, style = MaterialTheme.typography.bodySmall)
-                    Text(if (billingReady) "Play Billing connected" else "Website checkout", style = MaterialTheme.typography.labelSmall)
+                    Text("Payments are handled on the official FamilyGuard website.", style = MaterialTheme.typography.labelSmall)
                 }
             }
             DashboardCard("Live Location", locationText) {
@@ -628,6 +628,9 @@ private fun FamilyGuardDashboard(
                 Text(permissionStatusText, style = MaterialTheme.typography.bodyMedium)
                 Button(onClick = onSetupPermissions, modifier = Modifier.fillMaxWidth()) { Text("One-Click Setup All Permissions") }
                 OutlinedButton(onClick = onSetupPermissions, modifier = Modifier.fillMaxWidth()) { Text("Retry Missing Permissions") }
+            }
+            DashboardCard("App updates", "Check the official release server. Downloads are user initiated and Android asks you to confirm installation.") {
+                OutlinedButton(onClick = onCheckUpdate, modifier = Modifier.fillMaxWidth()) { Text("Check for app updates") }
             }
             DashboardCard("About & Settings", "Review the policies or clear local FamilyGuard settings. Your FamilyGuard account is shared with the official website dashboard.") {
                 OutlinedButton(onClick = onPrivacy, modifier = Modifier.fillMaxWidth()) { Text("Privacy Policy") }
