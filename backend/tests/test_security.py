@@ -76,11 +76,16 @@ def test_login_rate_limit_is_enforced(api):
 
 
 def test_invite_rate_limit_is_enforced(api):
-    _, data, headers = register(api[1])
+    main, client = api
+    _, data, headers = register(client)
+    with main.db() as conn:
+        code = f"{__import__('secrets').randbelow(1000000):06d}"
+        while conn.execute("SELECT 1 FROM invites WHERE code=?", (code,)).fetchone():
+            code = f"{__import__('secrets').randbelow(1000000):06d}"
     for _ in range(8):
-        response = api[1].post("/family/join", headers=headers, json={"inviteCode": "123456"})
+        response = client.post("/family/join", headers=headers, json={"inviteCode": code})
         assert response.status_code == 404
-    limited = api[1].post("/family/join", headers=headers, json={"inviteCode": "123456"})
+    limited = client.post("/family/join", headers=headers, json={"inviteCode": code})
     assert limited.status_code == 429
 
 
