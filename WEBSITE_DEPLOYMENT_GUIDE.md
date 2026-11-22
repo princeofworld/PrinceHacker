@@ -41,3 +41,13 @@ Open GitHub → repository → **Settings → Secrets and variables → Actions*
 - `APP_APK_URL` (default points to the latest signed GitHub release asset)
 
 The Android app checks this endpoint and opens the official APK URL in the browser when a newer version is available. Android handles the user's download and install confirmation.
+
+
+## Direct UPI and Admin Panel
+Configure these values in Render Dashboard → FamilyGuard service → Environment (never commit the UPI ID or admin password into GitHub):
+- `ADMIN_UPI_ID` — the public UPI ID used to receive the ₹999 payment.
+- `ADMIN_UPI_NAME` — optional payee display name.
+- `ADMIN_PANEL_USERNAME` — admin sign-in username.
+- `ADMIN_PANEL_PASSWORD` — a unique password of at least 16 characters. Keep it private; do not share it in chat or commit it.
+
+After redeploy, open `https://princehacker.onrender.com/admin/` in a mobile browser and sign in. The page is only an interface; all payment-list and approve/reject endpoints require HTTP Basic authentication over HTTPS. Compare the exact 12-digit UTR and ₹999 incoming credit in your bank's official app/statement before clicking Approve. Approval grants 30 days and the expiry is enforced by the backend. Direct UPI is one-time and does not auto-renew. The app deliberately does not ingest forwarded bank SMS or auto-approve from SMS content. Do not forward full bank messages because they may expose unrelated account information.
