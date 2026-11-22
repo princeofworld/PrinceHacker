@@ -15,7 +15,7 @@ Location is sent only after the device user grants foreground location permissio
 Users must protect their sign-in details. Family invite codes are short-lived, one-use codes. Do not share them publicly. Family creation requires a verified active Premium entitlement; joining an existing family requires a valid invite code.
 
 ## 5. Premium subscription
-Where Razorpay recurring checkout is configured, Premium is offered at ₹999 per month in INR. The recurring price, renewal terms and payment methods available to a customer are displayed by the payment provider during checkout. Subscription activation depends on successful server-side signature and status verification or a valid provider webhook. A test, pending or failed payment does not unlock Premium. Future renewals must be cancelled through the available provider subscription controls or by contacting support. Refund requests are handled under the published Refund & Cancellation Policy and applicable law.
+Direct UPI Premium is a one-time ₹999 payment for 30 days of access. It does not automatically renew; users must make a new payment each period. Users submit a 12-digit UTR and access remains pending until an administrator verifies the matching ₹999 credit in the bank's official transaction history. A UTR, screenshot or forwarded SMS alone is not proof of payment. Premium is never activated by an unverified client-side claim. If Razorpay subscription checkout is separately enabled, its renewal and cancellation terms are shown by the provider. Refund requests are handled under the published Refund & Cancellation Policy and applicable law.
 
 ## 6. Acceptable use and limitations
 Do not attempt to access another person's account or location without permission. Do not rely on FamilyGuard as the sole means of emergency communication or safety. The service may be unavailable during hosting, network or maintenance interruptions.
@@ -25,3 +25,7 @@ See the [Privacy Policy](https://github.com/princeofworld/PrinceHacker/blob/main
 
 ## 8. Contact
 For installation, account, privacy or billing support, use https://github.com/princeofworld/PrinceHacker/issues. Never post credentials, payment secrets, OTPs or precise location details publicly.
+
+
+## Direct UPI configuration and admin review
+The service may display a UPI QR code and payment intent for a UPI ID configured by the service administrator. The app does not read bank SMS or automatically approve payments from forwarded messages. Users submit a 12-digit UTR; an administrator must verify the exact credit in the bank app or statement before enabling Premium for 30 days. Never send UPI PINs, OTPs, passwords or full bank SMS messages to support.
