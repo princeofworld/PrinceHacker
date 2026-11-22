@@ -52,6 +52,7 @@ def test_upi_utr_end_to_end_manual_approval_activates_30_day_premium(api, monkey
     _, client = api
     monkeypatch.setenv("ADMIN_PANEL_USERNAME", admin_auth()[0])
     monkeypatch.setenv("ADMIN_PANEL_PASSWORD", admin_auth()[1])
+    monkeypatch.setenv("ADMIN_UPI_ID", "familyguard-test@upi")
     _, user, user_headers = register(client)
 
     config = client.get("/payment/upi-config")
@@ -64,7 +65,9 @@ def test_upi_utr_end_to_end_manual_approval_activates_30_day_premium(api, monkey
     assert submitted.status_code == 200, submitted.text
     assert submitted.json()["status"] == "pending"
     assert "not active" in submitted.json()["message"].lower()
-    assert client.get("/billing/status", headers=user_headers).json()["premium"] is False
+    pending_billing = client.get("/billing/status", headers=user_headers).json()
+    assert pending_billing["plan"] != "premium"
+    assert pending_billing["expiresAt"] is None
 
     duplicate = submit_utr(client, user_headers, "123456789012")
     assert duplicate.status_code == 409
@@ -130,8 +133,8 @@ def test_utr_rejection_reason_is_visible_and_does_not_activate_premium(api, monk
     assert history[0]["status"] == "rejected"
     assert history[0]["review_note"] == "UTR bank statement se match nahi hua"
     billing = client.get("/billing/status", headers=headers).json()
-    assert billing["premium"] is False
     assert billing["plan"] != "premium"
+    assert billing["expiresAt"] is None
 
 
 def test_admin_payment_routes_require_configured_admin_credentials(api, monkeypatch):
