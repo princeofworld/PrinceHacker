@@ -149,7 +149,9 @@ def secret():
 def b64(x:bytes)->str: return base64.urlsafe_b64encode(x).rstrip(b"=").decode()
 def jwt_make(uid:str)->str:
     head=b64(b'{"alg":"HS256","typ":"JWT"}')
-    payload=b64(json.dumps({"sub":uid,"iat":int(time.time()),"exp":int(time.time())+3600}).encode())
+    # A unique jti prevents two same-second logins from sharing one access
+    # token; revoking one device must not leave its token valid via another row.
+    payload=b64(json.dumps({"sub":uid,"jti":secrets.token_urlsafe(18),"iat":int(time.time()),"exp":int(time.time())+3600}).encode())
     msg=f"{head}.{payload}".encode()
     return f"{head}.{payload}.{b64(hmac.new(secret(),msg,hashlib.sha256).digest())}"
 def current_uid(authorization: str|None=Header(default=None))->str:
