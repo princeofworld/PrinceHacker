@@ -103,7 +103,10 @@ class MainActivity : ComponentActivity() {
         familyId = getSharedPreferences("familyguard_family", Context.MODE_PRIVATE).getString("familyId", "") ?: ""
         familyConsentEnabled = getSharedPreferences("familyguard_family", Context.MODE_PRIVATE).getBoolean("locationConsent", false)
         signedIn = !getSharedPreferences("familyguard_family", Context.MODE_PRIVATE).getString("idToken", null).isNullOrBlank()
-        if (signedIn) refreshSubscriptionStatus()
+        if (signedIn) {
+            refreshSubscriptionStatus()
+            verificationExecutor.execute { try { FamilyGuardApi.registerThisDevice(this) } catch (_: Exception) { } }
+        }
         setContent {
             MaterialTheme(colorScheme = darkColorScheme()) {
                 if (!signedIn) {
@@ -206,6 +209,7 @@ class MainActivity : ComponentActivity() {
         super.onResume()
         if (signedIn && consentAccepted) refreshUsageReport()
         if (signedIn) refreshSubscriptionStatus()
+        if (signedIn) verificationExecutor.execute { try { FamilyGuardApi.registerThisDevice(this) } catch (_: Exception) { } }
         updatePermissionStatus()
     }
 
