@@ -86,13 +86,13 @@ class DatabaseConnection:
     def execute(self,sql,params=()):
         if self.is_postgres:
             if sql.lstrip().upper().startswith("PRAGMA"):
-                pragma=re.match(r"\\s*PRAGMA\\s+table_info\\(([^)]+)\\)",sql,re.I)
+                pragma=re.match(r"\s*PRAGMA\\s+table_info\\(([^)]+)\\)",sql,re.I)
                 if pragma:
                     return self.connection.execute("SELECT column_name AS name FROM information_schema.columns WHERE table_schema=current_schema() AND table_name=%s",(pragma.group(1).strip(),))
                 return self.connection.execute("SELECT 1 WHERE FALSE")
-            is_ignore=bool(re.search(r"\\bINSERT\\s+OR\\s+IGNORE\\s+INTO\\b",sql,re.I))
-            is_replace=bool(re.search(r"\\bINSERT\\s+OR\\s+REPLACE\\s+INTO\\s+payment_subscriptions\\b",sql,re.I))
-            sql=re.sub(r"\\bINSERT\\s+OR\\s+(?:IGNORE|REPLACE)\\s+INTO\\b","INSERT INTO",sql,flags=re.I)
+            is_ignore=bool(re.search(r"\bINSERT\\s+OR\\s+IGNORE\\s+INTO\\b",sql,re.I))
+            is_replace=bool(re.search(r"\bINSERT\\s+OR\\s+REPLACE\\s+INTO\\s+payment_subscriptions\\b",sql,re.I))
+            sql=re.sub(r"\bINSERT\\s+OR\\s+(?:IGNORE|REPLACE)\\s+INTO\\b","INSERT INTO",sql,flags=re.I)
             if is_replace:
                 sql += " ON CONFLICT(subscription_id) DO UPDATE SET uid=EXCLUDED.uid,status=EXCLUDED.status,created=EXCLUDED.created,updated=EXCLUDED.updated"
             elif is_ignore:
