@@ -345,3 +345,22 @@ def test_adversarial_cross_user_family_and_device_isolation(api):
     own = client.get("/devices", headers=owner_headers)
     assert own.status_code == 200
     assert any(item["deviceId"] == device_id for item in own.json()["devices"])
+
+
+
+def test_tampered_backup_is_rejected_without_changing_live_database(api, monkeypatch):
+    main, client = api
+    monkeypatch.setenv("BACKUP_ENCRYPTION_KEY", "cd" * 32)
+    _, user, user_headers = register(client)
+
+    backup = bytearray(main.create_backup_blob())
+    backup[-1] ^= 0x01  # Corrupt the AES-GCM authentication tag.
+
+    with pytest.raises(Exception):
+        main.restore_backup_blob(bytes(backup), confirm_overwrite=True)
+
+    # Authentication is checked before any destructive database operation.
+    assert client.get("/account/profile", headers=user_headers).status_code == 200
+    with main.db() as conn:
+        row = conn.execute("SELECT uid FROM users WHERE uid=?", (user["localId"],)).fetchone()
+    assert row is not None
