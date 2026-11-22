@@ -21,8 +21,8 @@ android {
         applicationId = "com.princeofworld.familyguard"
         minSdk = 26
         targetSdk = 36
-        versionCode = 5
-        versionName = "1.3.0"
+        versionCode = 6
+        versionName = "1.3.1"
         buildConfigField("String", "FAMILYGUARD_API_BASE_URL", "\"${providers.gradleProperty("familyguardApiBaseUrl").orNull ?: System.getenv("FAMILYGUARD_API_BASE_URL") ?: "https://princehacker.onrender.com"}\"")
         buildConfigField("String", "FAMILYGUARD_VERIFY_URL", "\"${providers.gradleProperty("familyguardVerifyUrl").orNull ?: System.getenv("FAMILYGUARD_API_BASE_URL") ?: "https://princehacker.onrender.com"}\"")
     }
@@ -75,7 +75,6 @@ dependencies {
     implementation("androidx.compose.ui:ui-tooling-preview")
     implementation("androidx.compose.material3:material3")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.7")
-    implementation("com.android.billingclient:billing-ktx:8.0.0")
 
     testImplementation("junit:junit:4.13.2")
     androidTestImplementation("androidx.test.ext:junit:1.2.1")
