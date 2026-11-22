@@ -38,6 +38,117 @@ def register(client):
     return email, data, {"Authorization": f"Bearer {data['idToken']}"}
 
 
+
+
+def admin_auth():
+    return ("familyguard-test-admin", "test-admin-password-at-least-16")
+
+
+def submit_utr(client, headers, utr="123456789012"):
+    return client.post("/payment/submit-utr", headers=headers, json={"utr": utr})
+
+
+def test_upi_utr_end_to_end_manual_approval_activates_30_day_premium(api, monkeypatch):
+    _, client = api
+    monkeypatch.setenv("ADMIN_PANEL_USERNAME", admin_auth()[0])
+    monkeypatch.setenv("ADMIN_PANEL_PASSWORD", admin_auth()[1])
+    _, user, user_headers = register(client)
+
+    config = client.get("/payment/upi-config")
+    assert config.status_code == 200
+    assert config.json()["amount"] == 99900
+    assert config.json()["currency"] == "INR"
+    assert config.json()["mode"] == "manual_review"
+
+    submitted = submit_utr(client, user_headers, "123456789012")
+    assert submitted.status_code == 200, submitted.text
+    assert submitted.json()["status"] == "pending"
+    assert "not active" in submitted.json()["message"].lower()
+    assert client.get("/billing/status", headers=user_headers).json()["premium"] is False
+
+    duplicate = submit_utr(client, user_headers, "123456789012")
+    assert duplicate.status_code == 409
+
+    # A different account cannot use its bearer token as admin credentials.
+    _, _, other_headers = register(client)
+    blocked = client.post(
+        f"/admin/api/payments/{submitted.json()['paymentId']}/approve",
+        headers=other_headers,
+        json={"note": "attempted self approval"},
+    )
+    assert blocked.status_code == 401
+
+    pending = client.get("/admin/api/payments", auth=admin_auth())
+    assert pending.status_code == 200
+    payment = next(p for p in pending.json()["payments"] if p["id"] == submitted.json()["paymentId"])
+    assert payment["amount_paise"] == 99900
+    assert payment["status"] == "pending"
+
+    approved = client.post(
+        f"/admin/api/payments/{submitted.json()['paymentId']}/approve",
+        auth=admin_auth(),
+        json={"note": "Verified against bank statement"},
+    )
+    assert approved.status_code == 200, approved.text
+    assert approved.json()["approved"] is True
+
+    billing = client.get("/billing/status", headers=user_headers).json()
+    assert billing["plan"] == "premium"
+    assert billing["premium"] is True
+    now = __import__("time").time()
+    assert billing["expiresAt"] > now + 29 * 24 * 60 * 60
+    assert billing["expiresAt"] <= now + 30 * 24 * 60 * 60 + 2
+
+    history = client.get("/payment/my-utr", headers=user_headers).json()["payments"]
+    assert history[0]["status"] == "approved"
+    assert history[0]["review_note"] == "Verified against bank statement"
+
+    # A reviewed request is immutable: it cannot be approved a second time.
+    repeated = client.post(
+        f"/admin/api/payments/{submitted.json()['paymentId']}/approve",
+        auth=admin_auth(),
+        json={"note": "second approval"},
+    )
+    assert repeated.status_code == 409
+
+
+def test_utr_rejection_reason_is_visible_and_does_not_activate_premium(api, monkeypatch):
+    _, client = api
+    monkeypatch.setenv("ADMIN_PANEL_USERNAME", admin_auth()[0])
+    monkeypatch.setenv("ADMIN_PANEL_PASSWORD", admin_auth()[1])
+    _, _, headers = register(client)
+    submitted = submit_utr(client, headers, "987654321098")
+    assert submitted.status_code == 200
+
+    rejected = client.post(
+        f"/admin/api/payments/{submitted.json()['paymentId']}/reject",
+        auth=admin_auth(),
+        json={"note": "UTR bank statement se match nahi hua"},
+    )
+    assert rejected.status_code == 200, rejected.text
+    history = client.get("/payment/my-utr", headers=headers).json()["payments"]
+    assert history[0]["status"] == "rejected"
+    assert history[0]["review_note"] == "UTR bank statement se match nahi hua"
+    billing = client.get("/billing/status", headers=headers).json()
+    assert billing["premium"] is False
+    assert billing["plan"] != "premium"
+
+
+def test_admin_payment_routes_require_configured_admin_credentials(api, monkeypatch):
+    _, client = api
+    monkeypatch.setenv("ADMIN_PANEL_USERNAME", admin_auth()[0])
+    monkeypatch.setenv("ADMIN_PANEL_PASSWORD", admin_auth()[1])
+    assert client.get("/admin/api/payments").status_code == 401
+    assert client.get("/admin/api/payments", auth=admin_auth()).status_code == 200
+
+
+def test_utr_validation_rejects_non_12_digit_values(api):
+    _, client = api
+    _, _, headers = register(client)
+    for value in ("123", "abcdefghijkl", "12345678901", "1234567890123"):
+        response = client.post("/payment/submit-utr", headers=headers, json={"utr": value})
+        assert response.status_code == 422
+
 def test_logout_revokes_only_the_logged_out_device_session(api):
     email, first, first_headers = register(api[1])
     second = api[1].post("/auth/login", json={"email": email, "password": "Correct-Horse-42!"})
