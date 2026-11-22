@@ -2,6 +2,10 @@
 
 Self-contained FastAPI backend. No Firebase project, Firebase API key, or Firebase Admin SDK is required.
 
+## Payment mode
+
+The active payment mode is one-time ₹999 UPI with manual Admin verification. Legacy Razorpay recurring checkout, verification and webhook routes are disabled by default and require the explicit `RAZORPAY_ENABLED=true` flag plus provider credentials.
+
 ## Render
 - Root directory: `backend`
 - Build: `pip install -r requirements.txt`
