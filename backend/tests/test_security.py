@@ -214,6 +214,7 @@ def test_encrypted_backup_download_and_restore_round_trip(api, monkeypatch):
     assert b"password_hash" not in backup
 
     with main.db() as conn:
+        users_before = conn.execute("SELECT COUNT(*) AS count FROM users").fetchone()["count"]
         conn.execute("DELETE FROM users WHERE uid=?", (user["localId"],))
     assert client.get("/account/profile", headers=user_headers).status_code == 401
 
@@ -221,7 +222,7 @@ def test_encrypted_backup_download_and_restore_round_trip(api, monkeypatch):
         main.restore_backup_blob(backup, confirm_overwrite=False)
     restored = main.restore_backup_blob(backup, confirm_overwrite=True)
     assert restored["restored"] is True
-    assert restored["tables"]["users"] == 1
+    assert restored["tables"]["users"] == users_before
     assert client.get("/account/profile", headers=user_headers).status_code == 200
 
 
