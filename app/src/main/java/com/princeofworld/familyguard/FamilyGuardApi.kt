@@ -30,11 +30,10 @@ object FamilyGuardApi {
         } finally { connection.disconnect() }
     }
 
-    fun authenticate(email: String, password: String, create: Boolean): JSONObject {
+    fun authenticate(email: String, password: String): JSONObject {
         require(email.isNotBlank()) { "Enter your email address." }
-        require(password.length >= 10) { "Use a password with at least 10 characters." }
-        val path = if (create) "/auth/register" else "/auth/login"
-        return request(BASE_URL + path, "POST",
+        require(password.isNotBlank()) { "Enter your password." }
+        return request(BASE_URL + "/auth/login", "POST",
             JSONObject().put("email", email).put("password", password))
     }
 
