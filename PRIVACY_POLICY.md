@@ -1,57 +1,44 @@
 # FamilyGuard Privacy Policy
 
-**Effective date:** 21 November 2026
+**Effective date:** 22 November 2026
 
-FamilyGuard is an opt-in family-safety Android app. This policy describes the current implementation in this repository.
+FamilyGuard is a transparent, opt-in family-safety service. This policy describes the current repository implementation. The service is not an emergency-response service.
 
-## Information collected and used
+## Information processed
 
 ### Account and family membership
-The app uses Firebase Authentication Email/Password sign-in. Firebase supplies an account ID and ID token. The backend stores family membership, role, invite-code metadata and consent state in Firestore.
+FamilyGuard stores the email address used for sign-in and a salted scrypt password hash. It issues a signed session token. Family group membership, invite-code metadata and each member's location-consent state are stored in the backend SQLite database. Passwords are not stored in plain text.
 
-### Location
-Location is collected only after the device user grants Android foreground location permission, signs in, joins a family, explicitly enables location consent and presses **Start live sharing**. The app then starts a visible Android location foreground service with an ongoing notification and sends periodic coordinates, accuracy and capture time to the FamilyGuard backend over HTTPS. Family members can retrieve only locations from members who have opted in. The viewer must also have opted in. The app does not request `ACCESS_BACKGROUND_LOCATION`; location updates run only while the user-started location foreground service is active. The user can stop sharing and revoke consent in the app; revocation removes that member's last stored location.
+### Location and device check-ins
+Location is processed only after the device user grants Android foreground location permission, joins a family, explicitly enables location consent and starts the visible foreground location-sharing service. The app displays an ongoing Android notification while sharing is active. The service sends coordinates, accuracy, capture time and an optional battery percentage to the backend over HTTPS. The user can stop sharing and revoke consent at any time; revocation removes that member's last saved location. The API returns only records from members who have individually opted in and whose last check-in is no older than ten minutes. The dashboard's "online" indicator is an estimate based on a check-in in the previous three minutes, not a guarantee of network connectivity.
 
-The backend returns only locations updated within the last 10 minutes. Firestore encrypts stored data at rest and HTTPS protects data in transit. This is not end-to-end encryption. Location is sensitive personal information; share only with people you trust.
-
-### Subscription
-Google Play processes subscription payments. When checking Premium, the app sends a purchase token to the authenticated FamilyGuard backend. The backend calls Google Play Developer API and stores the verified Premium status and expiry for that Firebase account. The raw purchase token is not stored; a one-way hash is used to prevent linking the same purchase token to multiple FamilyGuard accounts.
+### Premium subscription
+Where configured, Razorpay handles recurring subscription checkout and payment processing. FamilyGuard stores the subscription identifier, status and account association needed to verify entitlements. Full card details, UPI PINs and payment credentials are not collected or stored by FamilyGuard. Razorpay API keys and webhook secrets must remain private server-side environment variables. Premium is enabled only after the backend verifies the payment signature and subscription status or receives a valid Razorpay webhook.
 
 ### App usage
-The optional Premium Usage Access report reads app usage on this device after the user enables the special Android Usage Access setting. The report is calculated and displayed locally and is not uploaded to the FamilyGuard backend.
+The optional Premium usage summary reads app usage locally on the Android device only after the user separately enables Android Usage Access. The summary is calculated on-device and is not uploaded by this implementation.
 
-### Other permissions
-The app requests notification permission for the persistent sharing notification and other visible notices. The current manifest does not request microphone, camera, call-log, contacts, SMS-read or screen-capture permissions.
+### Permissions
+The Android app uses internet, foreground location and notification permissions for the disclosed features. It does not include microphone, camera, call-log, contacts, SMS-read or screen-capture permissions. The app does not provide covert monitoring.
 
 ## Consent and user control
-
-A parent/legal guardian should review the app disclosure and obtain any consent required by applicable law. Every family member must separately opt in to location sharing. No member can silently enable another member's sharing. The user can revoke sharing at any time; Android permissions can also be revoked in Settings. The ongoing notification indicates when location sharing is active.
+Every participating device user must separately opt in to location sharing. No family member can silently enable another member's sharing. Users can stop sharing, revoke Android permissions or sign out. Parent/legal-guardian confirmation in the app is an on-device disclosure and is not identity or age verification.
 
 ## Data retention and deletion
+- Location records older than ten minutes are not returned by the family-location API; they may remain in the database until replaced or deleted.
+- Revoking consent deletes that member's current location record.
+- The authenticated account-data deletion endpoint deletes the account and related records covered by database foreign-key relationships. Some orphaned family metadata may require administrative cleanup.
+- Invite codes expire after fifteen minutes and can be redeemed once.
+- Locally calculated app-usage summaries are not uploaded to the service.
+- Payment-provider records and recurring mandates are managed by Razorpay and are not deleted by the FamilyGuard account-data endpoint. Subscription cancellation is a separate action.
 
-- A family member's last location is removed when that member revokes location consent or deletes their FamilyGuard account.
-- Location results older than 10 minutes are not returned by the API.
-- Family membership and verified Premium entitlement records are removed by the authenticated `DELETE /account-data` backend endpoint. Google Play billing records are managed separately through Google.
-- Family group records may remain if other members still belong to the group. Invite codes expire after 15 minutes and can be redeemed once.
-- App-usage reports are calculated locally and are not stored in a FamilyGuard cloud account.
-- Firebase Authentication account deletion must be performed through Firebase's account-management process; the backend data-deletion endpoint removes FamilyGuard data but does not itself delete the Firebase identity or cancel Google Play billing.
-
-## Security and third parties
-
-Firebase Authentication and Firestore are used for account, consent and family data. Google Play Developer API is used for subscription verification. Firebase Admin and Google Play service-account JSON keys are stored only in private Render environment variables and must never be included in the app or repository. The app receives only the Firebase Web API key, which is not a service-account credential. Free hosting may sleep or throttle, so sharing and Premium verification may be unavailable temporarily.
+## Security and service providers
+Requests use HTTPS in production. Passwords are hashed using scrypt and session tokens are signed by a server-side secret. Razorpay processes payments when enabled. The service is hosted on Render. No security measure guarantees absolute protection; avoid sharing passwords, invite codes or sensitive location details.
 
 ## Children's privacy and appropriate use
-
-FamilyGuard is intended for transparent, consent-based family use. Do not use it for covert monitoring, harassment or unauthorized tracking. The app's parent/guardian confirmation is not identity or age verification and is not a substitute for legally required consent.
-
-## Choices
-
-You can decline optional sharing, stop sharing, revoke consent, revoke Android permissions, sign out by clearing app data, and manage subscriptions through Google Play. Location sharing is unavailable if Firebase or the backend is not configured.
+FamilyGuard is designed for transparent, consent-based family use. Do not use it for covert monitoring, harassment or unauthorized tracking. Obtain any consent required by applicable law before sharing another person's information.
 
 ## Contact
+Project support: https://github.com/princeofworld/PrinceHacker/issues
 
-- Project: FamilyGuard
-- Repository: https://github.com/princeofworld/PrinceHacker
-- Contact: https://github.com/princeofworld/PrinceHacker/issues
-
-Do not post passwords, ID tokens, purchase tokens, coordinates or other sensitive data in public issues.
+Do not post passwords, session tokens, payment credentials, UPI PINs, OTPs or precise location data in public issues.
