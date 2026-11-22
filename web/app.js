@@ -1,7 +1,79 @@
-const API_BASE=location.origin,$=id=>document.getElementById(id);let token=null,emailAddress="";async function api(path,opts={}){const headers={...(opts.headers||{})};if(opts.body)headers["Content-Type"]="application/json";if(token)headers.Authorization="Bearer "+token;const res=await fetch(API_BASE+path,{...opts,headers});const data=await res.json().catch(()=>({detail:"Unexpected server response"}));if(!res.ok)throw Error(data.detail||"Request failed");return data}
-function showAuth(){ $("auth").classList.remove("hidden");$("auth").scrollIntoView({behavior:"smooth",block:"center"})}function showDash(){ $("auth").classList.add("hidden");$("dashboard").classList.remove("hidden");$("account-label").textContent=emailAddress}
+// Keep browser and Android authentication on the exact same API origin.
+const API_BASE="https://princehacker.onrender.com",$=id=>document.getElementById(id);
+let token=null,emailAddress="";
+function readableApiError(data,status){
+  const detail=data?.detail??data?.message??data?.error;
+  if(typeof detail==="string"&&detail.trim()) return detail;
+  if(Array.isArray(detail)){
+    const messages=detail.map(item=>{
+      if(typeof item==="string") return item;
+      if(item&&typeof item==="object") return item.msg||item.message||item.detail||"";
+      return "";
+    }).filter(Boolean);
+    if(messages.length) return messages.join(" ");
+  }
+  if(detail&&typeof detail==="object"){
+    const message=detail.message||detail.msg||detail.error_description||detail.error;
+    if(typeof message==="string"&&message.trim()) return message;
+  }
+  if(status===409) return "An account with this email already exists. Please sign in instead.";
+  if(status===401) return "Email or password is incorrect. Check your details and try again.";
+  if(status===422) return "Please enter a valid email address and a password with at least 10 characters.";
+  if(status===429) return "Too many attempts. Please wait a moment and try again.";
+  if(status>=500) return "FamilyGuard service is temporarily unavailable. Please try again later.";
+  return status ? "Request failed (HTTP "+status+"). Please check your details and try again." : "Something went wrong. Please try again.";
+}
+async function api(path,opts={}){
+  const headers={Accept:"application/json",...(opts.headers||{})};
+  if(opts.body) headers["Content-Type"]="application/json";
+  if(token) headers.Authorization="Bearer "+token;
+  let res;
+  try { res=await fetch(API_BASE+path,{...opts,headers}); }
+  catch(e){ throw new Error("Could not connect to FamilyGuard. Check your internet connection and try again."); }
+  const raw=await res.text();
+  let data={};
+  if(raw){
+    try { data=JSON.parse(raw); }
+    catch { data={message:raw.slice(0,240)}; }
+  }
+  if(!res.ok) throw new Error(readableApiError(data,res.status));
+  if(!data||typeof data!=="object") throw new Error("FamilyGuard returned an unexpected response. Please try again.");
+  return data;
+}
+function showAuth(){
+  $("auth").classList.remove("hidden");
+  $("auth").scrollIntoView({behavior:"smooth",block:"center"});
+}
+function showDash(){
+  $("auth").classList.add("hidden");
+  $("dashboard").classList.remove("hidden");
+  $("account-label").textContent=emailAddress;
+  history.replaceState(null,"","#dashboard");
+  $("dashboard").scrollIntoView({behavior:"smooth",block:"start"});
+}
 ["nav-login","hero-login","free-login"].forEach(id=>$(id).addEventListener("click",showAuth));$("close-auth").onclick=()=>$("auth").classList.add("hidden");
-async function authAction(create){$("auth-message").textContent=create?"Creating account…":"Signing in…";try{const d=await api(create?"/auth/register":"/auth/login",{method:"POST",body:JSON.stringify({email:$("email").value,password:$("password").value})});token=d.idToken;emailAddress=$("email").value.trim();sessionStorage.setItem("fg_token",token);sessionStorage.setItem("fg_email",emailAddress);$("password").value="";showDash();await refreshBilling()}catch(e){$("auth-message").textContent=e.message}}
+async function authAction(create){
+  const message=$("auth-message"),email=$("email").value.trim().toLowerCase(),password=$("password").value;
+  const submit=$("auth-form").querySelector('button[type="submit"]'),register=$("register");
+  if(!email){message.textContent="Enter your email address.";return}
+  if(!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)){message.textContent="Enter a valid email address.";return}
+  if(password.length<10){message.textContent="Use a password with at least 10 characters.";return}
+  message.textContent=create?"Creating your account…":"Signing in…";
+  submit.disabled=true;register.disabled=true;
+  try{
+    const d=await api(create?"/auth/register":"/auth/login",{method:"POST",body:JSON.stringify({email,password})});
+    if(!d.idToken||!d.localId) throw new Error("Authentication response was incomplete. Please try again.");
+    token=d.idToken;emailAddress=email;
+    sessionStorage.setItem("fg_token",token);sessionStorage.setItem("fg_email",emailAddress);
+    $("password").value="";
+    showDash();
+    await refreshBilling();
+  }catch(e){
+    message.textContent=e instanceof Error&&e.message?e.message:"Unable to complete authentication. Please try again.";
+  }finally{
+    submit.disabled=false;register.disabled=false;
+  }
+}
 $("auth-form").onsubmit=e=>{e.preventDefault();authAction(false)};$("register").onclick=()=>authAction(true);
 function signOut(){token=null;emailAddress="";sessionStorage.removeItem("fg_token");sessionStorage.removeItem("fg_email");$("dashboard").classList.add("hidden");$("locations").innerHTML='<p class="muted">Enter your Family ID to load reports.</p>'}
 $("logout").onclick=signOut;$("clear-session").onclick=signOut;
