@@ -136,7 +136,8 @@ class MainActivity : ComponentActivity() {
                     onOpenWebsite = { openWebPage("https://princehacker.onrender.com/") },
                     onLogout = { logout() },
                     onPrivacy = { openWebPage("https://raw.githubusercontent.com/princeofworld/PrinceHacker/main/PRIVACY_POLICY.md") },
-                    onTerms = { openWebPage("https://raw.githubusercontent.com/princeofworld/PrinceHacker/main/TERMS_OF_SERVICE.md") }
+                    onTerms = { openWebPage("https://raw.githubusercontent.com/princeofworld/PrinceHacker/main/TERMS_OF_SERVICE.md") },
+                    onDeleteAccount = { showDeleteDataDialog = true }
                 )
                 pendingDisclosure?.let { step ->
                     val disclosure = when (step) {
@@ -179,16 +180,32 @@ class MainActivity : ComponentActivity() {
                 if (showDeleteDataDialog) {
                     AlertDialog(
                         onDismissRequest = { showDeleteDataDialog = false },
-                        title = { Text("Delete FamilyGuard data?") },
-                        text = { Text("FamilyGuard account and family data are stored on the service. This local action clears app settings; use the account-data endpoint to request server data deletion. Recurring payment cancellation is managed through the payment provider.") },
+                        title = { Text("Delete FamilyGuard account?") },
+                        text = { Text("This permanently deletes your FamilyGuard account and associated server records, including family and payment-review records. This cannot be undone. Direct UPI payments do not create recurring mandates.") },
                         confirmButton = {
                             TextButton(onClick = {
-                                getSharedPreferences("familyguard_privacy", Context.MODE_PRIVATE).edit().clear().apply()
-                                consentAccepted = false
-                                premium = false
                                 showDeleteDataDialog = false
-                                recreate()
-                            }) { Text("Delete local data") }
+                                notice = "Deleting your account and associated data…"
+                                verificationExecutor.execute {
+                                    try {
+                                        FamilyGuardApi.deleteAccount(this)
+                                        stopService(Intent(this, FamilyLocationService::class.java))
+                                        getSharedPreferences("familyguard_family", Context.MODE_PRIVATE).edit().clear().apply()
+                                        getSharedPreferences("familyguard_privacy", Context.MODE_PRIVATE).edit().clear().apply()
+                                        getSharedPreferences("familyguard_permissions", Context.MODE_PRIVATE).edit().clear().apply()
+                                        runOnUiThread {
+                                            signedIn = false
+                                            premium = false
+                                            consentAccepted = false
+                                            familyConsentEnabled = false
+                                            showDeleteDataDialog = false
+                                            notice = "Your FamilyGuard account and associated server data were deleted."
+                                        }
+                                    } catch (e: Exception) {
+                                        runOnUiThread { notice = e.message ?: "Account deletion failed. Please try again." }
+                                    }
+                                }
+                            }) { Text("Delete account and data") }
                         },
                         dismissButton = { TextButton(onClick = { showDeleteDataDialog = false }) { Text("Cancel") } }
                     )
@@ -380,7 +397,7 @@ class MainActivity : ComponentActivity() {
             Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && !restrictedHelpShown -> "Action needed: review Android Restricted Settings"
             else -> "Pending: enable FamilyGuard in Usage Access settings"
         }
-        permissionStatusText = "Location: $location\nNotifications: $notifications\nUsage Access: $usage\nBackground location: Not requested (no background tracking)\nBattery exemption: Not requested (not needed)"
+        permissionStatusText = "Location: $location\nNotifications: $notifications\nUsage Access: $usage\nBackground location permission: Not requested; sharing uses a user-started foreground service.\nBattery exemption: Not requested (not needed)"
     }
 
     private fun openPremiumCheckout() {
@@ -396,8 +413,8 @@ class MainActivity : ComponentActivity() {
                 runOnUiThread {
                     premium = active
                     billingReady = true
-                    billingMessage = if (active) "Razorpay subscription is active." else
-                        "Free plan. Premium activates only after server-verified payment."
+                    billingMessage = if (active) "Premium is active for this account." else
+                        "Free plan. UPI payments stay Pending until an administrator verifies the bank credit."
                     refreshUsageReport()
                     updatePermissionStatus()
                 }
@@ -563,9 +580,9 @@ private fun ParentalConsentDisclosureScreen(
                 style = MaterialTheme.typography.bodyLarge
             )
             Text("Location", style = MaterialTheme.typography.titleMedium)
-            Text("If you choose the location feature, Android will ask for foreground location permission (precise or approximate). Location is used only when you actively request an update and is displayed on this device. This app does not request background location and does not continuously track location.")
+            Text("If you choose location sharing, Android asks for foreground location permission (precise or approximate). After you join a family, enable consent and tap Start live sharing while the app is open, FamilyGuard runs a visible location foreground service. While it is active, it may request updates about every 60 seconds, including while the app is minimized, and send your coordinates, accuracy, time and optional battery percentage to your opted-in family over HTTPS. A persistent notification remains visible. Stop sharing or revoke consent to stop. FamilyGuard does not request ACCESS_BACKGROUND_LOCATION.")
             Text("App usage", style = MaterialTheme.typography.titleMedium)
-            Text("If you choose the Premium usage report, Android Settings will ask you to grant Usage Access (PACKAGE_USAGE_STATS). FamilyGuard reads app usage on this device to show a recent usage summary. You can revoke this access in Android Settings.")
+            Text("If you choose the Premium usage report, Android Settings will ask you to grant Usage Access (PACKAGE_USAGE_STATS). FamilyGuard reads app names and foreground-use durations from the last 24 hours to show a summary on this device only. This summary is not uploaded to the FamilyGuard server. You can revoke this access in Android Settings.")
             Text("Data, sharing and safety", style = MaterialTheme.typography.titleMedium)
             Text("Location sharing is optional. When the device user explicitly enables it, the app sends location to the FamilyGuard server over HTTPS and shows an ongoing Android notification. The user can stop sharing and revoke consent at any time. Never use this app for covert monitoring.")
             Text("Parental consent", style = MaterialTheme.typography.titleMedium)
@@ -631,7 +648,8 @@ private fun FamilyGuardDashboard(
     onOpenWebsite: () -> Unit,
     onLogout: () -> Unit,
     onPrivacy: () -> Unit,
-    onTerms: () -> Unit
+    onTerms: () -> Unit,
+    onDeleteAccount: () -> Unit
 ) {
     Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
         Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp),
@@ -680,6 +698,7 @@ private fun FamilyGuardDashboard(
                     Text("Settings", style = MaterialTheme.typography.titleLarge)
                     OutlinedButton(onClick = onPrivacy, modifier = Modifier.fillMaxWidth()) { Text("Privacy Policy") }
                     OutlinedButton(onClick = onTerms, modifier = Modifier.fillMaxWidth()) { Text("Terms of Service") }
+                    OutlinedButton(onClick = onDeleteAccount, modifier = Modifier.fillMaxWidth()) { Text("Delete account and data") }
                     OutlinedButton(onClick = onLogout, modifier = Modifier.fillMaxWidth()) { Text("Log out") }
                 }
             }
