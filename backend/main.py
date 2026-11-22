@@ -150,10 +150,10 @@ def billing_config():
 @app.get("/billing/status")
 def billing_status(uid:str=Depends(current_uid)):
     with db() as c:
-        row=c.execute("SELECT status,updated FROM entitlements WHERE uid=?",(uid,)).fetchone()
+        row=c.execute("SELECT status,updated,expires_at FROM entitlements WHERE uid=?",(uid,)).fetchone()
         sub=c.execute("SELECT subscription_id,status,updated FROM payment_subscriptions WHERE uid=? ORDER BY updated DESC LIMIT 1",(uid,)).fetchone()
     active=premium_active(c,uid)
-    return {"plan":"premium" if active else "free","premium":active,"status":row["status"] if row else "free","subscriptionStatus":sub["status"] if sub else None,"updatedAt":row["updated"] if row else None}
+    return {"plan":"premium" if active else "free","premium":active,"status":row["status"] if row else "free","subscriptionStatus":sub["status"] if sub else None,"updatedAt":row["updated"] if row else None,"expiresAt":row["expires_at"] if row else None}
 
 @app.post("/payment/create-order")
 def payment_create_order(uid:str=Depends(current_uid)):
