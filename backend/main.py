@@ -2,7 +2,7 @@
 Location sharing is opt-in, visible, time-limited and revocable.
 """
 from __future__ import annotations
-import os, sqlite3, hashlib, hmac, base64, json, secrets, time
+import os, sqlite3, hashlib, hmac, base64, json, secrets, time, urllib.request, urllib.error
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Optional
@@ -44,6 +44,10 @@ class VerifyRequest(BaseModel):
     productId: str
     basePlanId: str
     purchaseToken: SecretStr=Field(min_length=10,max_length=4096)
+class SubscriptionVerify(BaseModel):
+    razorpay_subscription_id: str=Field(min_length=8,max_length=80)
+    razorpay_payment_id: str=Field(min_length=8,max_length=80)
+    razorpay_signature: str=Field(min_length=32,max_length=128)
 
 def db():
     c=sqlite3.connect(DB_PATH,timeout=15); c.row_factory=sqlite3.Row
@@ -59,6 +63,7 @@ def init_db():
         CREATE TABLE IF NOT EXISTS locations(family_id TEXT NOT NULL,uid TEXT NOT NULL,lat REAL NOT NULL,lon REAL NOT NULL,accuracy REAL,captured REAL NOT NULL,battery INTEGER,PRIMARY KEY(family_id,uid),FOREIGN KEY(family_id,uid) REFERENCES members(family_id,uid) ON DELETE CASCADE);
         CREATE TABLE IF NOT EXISTS entitlements(uid TEXT PRIMARY KEY,status TEXT NOT NULL,product_id TEXT,base_plan_id TEXT,token_hash TEXT,updated REAL NOT NULL,FOREIGN KEY(uid) REFERENCES users(uid) ON DELETE CASCADE);
         CREATE TABLE IF NOT EXISTS app_meta(k TEXT PRIMARY KEY,v TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS payment_subscriptions(subscription_id TEXT PRIMARY KEY,uid TEXT NOT NULL,status TEXT NOT NULL,created REAL NOT NULL,updated REAL NOT NULL,FOREIGN KEY(uid) REFERENCES users(uid) ON DELETE CASCADE);
         """)
         columns={r["name"] for r in c.execute("PRAGMA table_info(locations)").fetchall()}
         if "battery" not in columns: c.execute("ALTER TABLE locations ADD COLUMN battery INTEGER")
@@ -188,11 +193,120 @@ def location_family(familyId:str,uid:str=Depends(current_uid)):
         # A family member may view only locations shared by members who individually consented.
         rows=c.execute("""SELECT l.uid,l.lat,l.lon,l.accuracy,l.captured,l.battery FROM locations l JOIN members m ON m.family_id=l.family_id AND m.uid=l.uid WHERE l.family_id=? AND m.consent=1 AND l.captured>=?""",(familyId,time.time()-600)).fetchall()
     return {"familyId":familyId,"locations":[{"uid":r["uid"],"latitude":r["lat"],"longitude":r["lon"],"accuracyMeters":r["accuracy"],"batteryPercent":r["battery"],"isOnline":(time.time()-r["captured"])<=180,"capturedAt":datetime.fromtimestamp(r["captured"],timezone.utc).isoformat()} for r in rows]}
+
+def razorpay_configured():
+    return bool(os.getenv("RAZORPAY_KEY_ID") and os.getenv("RAZORPAY_KEY_SECRET") and os.getenv("RAZORPAY_PLAN_ID"))
+def razorpay_request(path: str, method: str="GET", payload: dict|None=None):
+    key=os.getenv("RAZORPAY_KEY_ID","").strip()
+    secret_value=os.getenv("RAZORPAY_KEY_SECRET","").strip()
+    if not key or not secret_value: raise HTTPException(503,"Razorpay is not configured. Premium checkout is temporarily unavailable.")
+    raw=json.dumps(payload or {}).encode() if payload is not None else None
+    auth=base64.b64encode(f"{key}:{secret_value}".encode()).decode()
+    req=urllib.request.Request("https://api.razorpay.com/v1/"+path.lstrip("/"),data=raw,method=method,headers={"Authorization":"Basic "+auth,"Content-Type":"application/json","Accept":"application/json"})
+    try:
+        with urllib.request.urlopen(req,timeout=15) as response: return json.loads(response.read().decode())
+    except urllib.error.HTTPError as exc:
+        detail=exc.read().decode(errors="replace")[:500]
+        raise HTTPException(502,"Razorpay request failed. Check the merchant plan and API configuration.") from exc
+    except Exception as exc:
+        raise HTTPException(502,"Razorpay could not be reached. Please retry later.") from exc
+
+@app.get("/billing/config")
+def billing_config():
+    return {"provider":"razorpay","configured":razorpay_configured(),"amount":99900,"currency":"INR","interval":"monthly","displayPrice":"₹999/month","keyId":os.getenv("RAZORPAY_KEY_ID") if razorpay_configured() else None}
+
+@app.get("/billing/status")
+def billing_status(uid:str=Depends(current_uid)):
+    with db() as c:
+        row=c.execute("SELECT status,updated FROM entitlements WHERE uid=?",(uid,)).fetchone()
+        sub=c.execute("SELECT subscription_id,status,updated FROM payment_subscriptions WHERE uid=? ORDER BY updated DESC LIMIT 1",(uid,)).fetchone()
+    active=bool(row and row["status"]=="verified_active")
+    return {"plan":"premium" if active else "free","premium":active,"status":row["status"] if row else "free","subscriptionStatus":sub["status"] if sub else None,"updatedAt":row["updated"] if row else None}
+
+@app.post("/payment/create-order")
+def payment_create_order(uid:str=Depends(current_uid)):
+    if not razorpay_configured():
+        return JSONResponse(status_code=503,content={"configured":False,"detail":"Razorpay credentials and a monthly ₹999 plan are not configured. No payment has been taken."})
+    with db() as c:
+        user=c.execute("SELECT email FROM users WHERE uid=?",(uid,)).fetchone()
+    plan_id=os.getenv("RAZORPAY_PLAN_ID","").strip()
+    payload={"plan_id":plan_id,"total_count":int(os.getenv("RAZORPAY_SUBSCRIPTION_CYCLES","120")),"quantity":1,"customer_notify":True,"notes":{"familyguard_uid":uid,"product":"FamilyGuard Premium ₹999 monthly"}}
+    created=razorpay_request("subscriptions","POST",payload)
+    sub_id=created.get("id")
+    if not sub_id: raise HTTPException(502,"Razorpay did not return a subscription ID.")
+    now=time.time()
+    with db() as c:
+        c.execute("INSERT OR REPLACE INTO payment_subscriptions(subscription_id,uid,status,created,updated) VALUES(?,?,?,?,?)",(sub_id,uid,created.get("status","created"),now,now))
+    return {"configured":True,"provider":"razorpay","keyId":os.getenv("RAZORPAY_KEY_ID"),"subscriptionId":sub_id,"shortUrl":created.get("short_url"),"amount":99900,"currency":"INR","name":"FamilyGuard Premium","description":"₹999 per month recurring subscription","prefill":{"email":user["email"] if user else ""}}
+
+@app.post("/payment/verify")
+def payment_verify(payload:SubscriptionVerify,uid:str=Depends(current_uid)):
+    secret_value=os.getenv("RAZORPAY_KEY_SECRET","").strip()
+    if not secret_value: raise HTTPException(503,"Razorpay verification is not configured. Premium remains locked.")
+    with db() as c:
+        saved=c.execute("SELECT * FROM payment_subscriptions WHERE subscription_id=? AND uid=?",(payload.razorpay_subscription_id,uid)).fetchone()
+    if not saved: raise HTTPException(403,"Subscription does not belong to this account.")
+    expected=hmac.new(secret_value.encode(),f"{payload.razorpay_payment_id}|{payload.razorpay_subscription_id}".encode(),hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(expected,payload.razorpay_signature): raise HTTPException(400,"Razorpay signature verification failed.")
+    remote=razorpay_request("subscriptions/"+payload.razorpay_subscription_id)
+    status=remote.get("status","unknown")
+    if remote.get("plan_id")!=os.getenv("RAZORPAY_PLAN_ID"): raise HTTPException(400,"Subscription plan does not match FamilyGuard Premium.")
+    notes=remote.get("notes") or {}
+    if notes.get("familyguard_uid")!=uid: raise HTTPException(403,"Subscription account verification failed.")
+    active=status in ("active","authenticated") and int(remote.get("paid_count") or 0)>=1
+    now=time.time()
+    with db() as c:
+        c.execute("UPDATE payment_subscriptions SET status=?,updated=? WHERE subscription_id=?",(status,now,payload.razorpay_subscription_id))
+        if active:
+            c.execute("""INSERT INTO entitlements(uid,status,product_id,base_plan_id,token_hash,updated) VALUES(?,?,?,?,?,?)
+            ON CONFLICT(uid) DO UPDATE SET status='verified_active',product_id=excluded.product_id,base_plan_id=excluded.base_plan_id,token_hash=excluded.token_hash,updated=excluded.updated""",
+            (uid,"verified_active","familyguard_razorpay_monthly_999","monthly-999",payload.razorpay_subscription_id,now))
+    return {"verified":True,"active":active,"status":status,"message":"Premium activated after Razorpay signature and subscription checks." if active else "Payment callback verified; subscription activation is still pending. Premium remains locked until Razorpay confirms the first paid cycle."}
+
+@app.post("/payment/webhook")
+async def payment_webhook(request:Request):
+    secret_value=os.getenv("RAZORPAY_WEBHOOK_SECRET","").strip()
+    if not secret_value: raise HTTPException(503,"Webhook verification is not configured.")
+    raw=await request.body()
+    supplied=request.headers.get("X-Razorpay-Signature","")
+    expected=hmac.new(secret_value.encode(),raw,hashlib.sha256).hexdigest()
+    if not supplied or not hmac.compare_digest(expected,supplied): raise HTTPException(400,"Invalid Razorpay webhook signature.")
+    event=json.loads(raw.decode())
+    event_name=event.get("event","")
+    entity=((event.get("payload") or {}).get("subscription") or {}).get("entity") or {}
+    sub_id=entity.get("id")
+    if not sub_id: return {"received":True,"ignored":True}
+    states={"subscription.activated":"verified_active","subscription.charged":"verified_active","subscription.authenticated":"verified_active","subscription.cancelled":"cancelled","subscription.halted":"halted","subscription.paused":"paused","subscription.completed":"completed"}
+    state=states.get(event_name)
+    if not state: return {"received":True,"ignored":True}
+    now=time.time()
+    with db() as c:
+        saved=c.execute("SELECT uid FROM payment_subscriptions WHERE subscription_id=?",(sub_id,)).fetchone()
+        if not saved:
+            uid=(entity.get("notes") or {}).get("familyguard_uid")
+            if uid and c.execute("SELECT 1 FROM users WHERE uid=?",(uid,)).fetchone():
+                c.execute("INSERT INTO payment_subscriptions(subscription_id,uid,status,created,updated) VALUES(?,?,?,?,?)",(sub_id,uid,state,now,now))
+                saved={"uid":uid}
+        if saved:
+            uid=saved["uid"]
+            c.execute("UPDATE payment_subscriptions SET status=?,updated=? WHERE subscription_id=?",(state,now,sub_id))
+            if state=="verified_active":
+                c.execute("""INSERT INTO entitlements(uid,status,product_id,base_plan_id,token_hash,updated) VALUES(?,?,?,?,?,?)
+                ON CONFLICT(uid) DO UPDATE SET status='verified_active',product_id=excluded.product_id,base_plan_id=excluded.base_plan_id,token_hash=excluded.token_hash,updated=excluded.updated""",
+                (uid,"verified_active","familyguard_razorpay_monthly_999","monthly-999",sub_id,now))
+            else:
+                c.execute("UPDATE entitlements SET status='inactive',updated=? WHERE uid=? AND token_hash=?",(now,uid,sub_id))
+    return {"received":True}
+
+@app.get("/app/latest-version")
+def latest_app_version():
+    return {"versionName":os.getenv("APP_VERSION_NAME","1.3.1"),"versionCode":int(os.getenv("APP_VERSION_CODE","6")),"minimumVersionCode":int(os.getenv("APP_MINIMUM_VERSION_CODE","5")),"apkUrl":os.getenv("APP_APK_URL","https://github.com/princeofworld/PrinceHacker/releases/latest/download/FamilyGuard-release-signed.apk"),"releaseNotes":"Official FamilyGuard update. Review the changes before installing.","forceUpdate":False}
+
 @app.delete("/account-data")
 def delete_account_data(uid:str=Depends(current_uid)):
     with db() as c:
         c.execute("DELETE FROM users WHERE uid=?",(uid,))
-    return {"deleted":True,"billingManagedBy":"Google Play","note":"Google Play subscription cancellation is separate."}
+    return {"deleted":True,"billingManagedBy":"Razorpay (if configured)","note":"Cancel recurring payments through the FamilyGuard support channel or Razorpay mandate controls."}
 @app.get("/api")
 def root(): return {"service":"FamilyGuard API","docs":"/docs","health":"/health"}
 
