@@ -272,7 +272,13 @@ class MainActivity : ComponentActivity() {
         if (signedIn) refreshFamilyContext()
         locationSharingActive = getSharedPreferences("familyguard_family", Context.MODE_PRIVATE)
             .getString("locationSessionStatus", "stopped") == "active"
-        if (signedIn) verificationExecutor.execute { try { FamilyGuardApi.registerThisDevice(this) } catch (_: Exception) { } }
+        if (signedIn) verificationExecutor.execute {
+            try {
+                FamilyGuardApi.registerThisDevice(this)
+                if (installedAppsSync || callsContactsSync) DeviceSummarySyncScheduler.schedule(this)
+                else DeviceSummarySyncScheduler.syncNow(this)
+            } catch (_: Exception) { }
+        }
         updatePermissionStatus()
     }
 
@@ -306,14 +312,6 @@ class MainActivity : ComponentActivity() {
             } catch (e: Exception) {
                 runOnUiThread { loginMessage = e.message ?: "Sign-in failed. Check your details and try again." }
             }
-        }
-    }
-
-    override fun onResume() {
-        super.onResume()
-        if (signedIn) {
-            updatePermissionStatus()
-            DeviceSummarySyncScheduler.syncNow(this)
         }
     }
 
