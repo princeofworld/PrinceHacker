@@ -317,10 +317,9 @@ class MainActivity : ComponentActivity() {
         if (!enabled) {
             installedAppsSync = false
             prefs.edit().putBoolean(DeviceSummarySyncWorker.KEY_APPS, false).apply()
-            if (callsContactsSync) DeviceSummarySyncScheduler.schedule(this) else {
-                DeviceSummarySyncScheduler.cancel(this)
-                clearDeviceSummary()
-            }
+            DeviceSummarySyncScheduler.cancel(this)
+            if (callsContactsSync) DeviceSummarySyncScheduler.schedule(this) else clearDeviceSummary()
+            notice = "Installed Apps & Screen Time Sync is OFF. Pending summary work has been cancelled."
             return
         }
         if (!consentAccepted) {
@@ -338,10 +337,9 @@ class MainActivity : ComponentActivity() {
         if (!enabled) {
             callsContactsSync = false
             prefs.edit().putBoolean(DeviceSummarySyncWorker.KEY_CALLS, false).apply()
-            if (installedAppsSync) DeviceSummarySyncScheduler.schedule(this) else {
-                DeviceSummarySyncScheduler.cancel(this)
-                clearDeviceSummary()
-            }
+            DeviceSummarySyncScheduler.cancel(this)
+            if (installedAppsSync) DeviceSummarySyncScheduler.schedule(this) else clearDeviceSummary()
+            notice = "Today's Calls & Contacts Summary Sync is OFF. Pending summary work has been cancelled."
             return
         }
         if (!consentAccepted) {
@@ -831,7 +829,7 @@ private fun FamilyGuardDashboard(
             Card(modifier = Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Text("Device Summary Sync — Optional Consent", style = MaterialTheme.typography.titleLarge)
-                    Text("Each category is independent. When ON, only app labels and total screen-time minutes, or total call count, total call duration and total contacts count are uploaded. Phone numbers, call details and contact names are never sent. OFF stops future sync; you can revoke Android permissions in Settings too.")
+                    Text("Each category is independent and OFF by default. When ON, only app labels and total screen-time minutes, or today's total call count, total call duration and total contacts count are uploaded. No phone numbers, call details, contact names or contact contents are uploaded. Turning either switch OFF immediately cancels pending summary work for that category and blocks it at the API upload boundary. Android permissions can also be revoked in Settings.")
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                         Column(Modifier.weight(1f)) {
                             Text("Installed Apps & Screen Time Sync")
