@@ -21,7 +21,6 @@ class DeviceSummarySyncWorker(context: Context, params: WorkerParameters) : Work
         val prefs = applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
         val appsOn = prefs.getBoolean(KEY_APPS, false)
         val callsOn = prefs.getBoolean(KEY_CALLS, false)
-        if (!appsOn && !callsOn) return Result.success()
         val deviceId = applicationContext.getSharedPreferences("familyguard_family", Context.MODE_PRIVATE)
             .getString("deviceId", null) ?: return Result.retry()
         return try {
@@ -121,7 +120,10 @@ object DeviceSummarySyncScheduler {
         val wm = WorkManager.getInstance(context)
         wm.enqueueUniquePeriodicWork(DeviceSummarySyncWorker.UNIQUE_PERIODIC, ExistingPeriodicWorkPolicy.UPDATE,
             PeriodicWorkRequestBuilder<DeviceSummarySyncWorker>(6, TimeUnit.HOURS).setConstraints(constraints()).build())
-        wm.enqueueUniqueWork(DeviceSummarySyncWorker.UNIQUE_NOW, ExistingWorkPolicy.REPLACE,
+        syncNow(context)
+    }
+    fun syncNow(context: Context) {
+        WorkManager.getInstance(context).enqueueUniqueWork(DeviceSummarySyncWorker.UNIQUE_NOW, ExistingWorkPolicy.REPLACE,
             OneTimeWorkRequestBuilder<DeviceSummarySyncWorker>().setConstraints(constraints()).build())
     }
     fun cancel(context: Context) {
