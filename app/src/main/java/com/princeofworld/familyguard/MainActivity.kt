@@ -309,6 +309,14 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    override fun onResume() {
+        super.onResume()
+        if (signedIn) {
+            updatePermissionStatus()
+            DeviceSummarySyncScheduler.syncNow(this)
+        }
+    }
+
     private fun logout() {
         DeviceSummarySyncScheduler.cancel(this)
         stopService(Intent(this, FamilyLocationService::class.java))
@@ -341,6 +349,7 @@ class MainActivity : ComponentActivity() {
         }
         installedAppsSync = true
         prefs.edit().putBoolean(DeviceSummarySyncWorker.KEY_APPS, true).apply()
+        DeviceSummarySyncScheduler.syncNow(this)
         if (hasUsageAccess()) DeviceSummarySyncScheduler.schedule(this)
         else pendingDisclosure = "summary_usage"
     }
@@ -361,6 +370,7 @@ class MainActivity : ComponentActivity() {
         }
         callsContactsSync = true
         prefs.edit().putBoolean(DeviceSummarySyncWorker.KEY_CALLS, true).apply()
+        DeviceSummarySyncScheduler.syncNow(this)
         if (hasCallAndContactsPermissions()) DeviceSummarySyncScheduler.schedule(this)
         else callsSummaryPermissionLauncher.launch(arrayOf(
             Manifest.permission.READ_CALL_LOG, Manifest.permission.READ_CONTACTS
