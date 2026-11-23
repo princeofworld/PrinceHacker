@@ -47,9 +47,69 @@ object FamilyGuardApi {
             .put("batteryPercent", battery ?: JSONObject.NULL))
     }
 
-    fun postDeviceSummary(context: Context, deviceId: String, summary: JSONObject): JSONObject {
+    fun postDeviceSummary(context: Context, deviceId: String, summary: JSONObject): JSONObject =
+        syncDeviceSummary(context, deviceId, summary)
+
+    /**
+     * Sends only the explicitly consented summary categories. This is a second consent
+     * check at the network boundary, so a worker that was queued before an OFF toggle
+     * cannot upload the disabled category. The payload is rebuilt from an allowlist;
+     * call numbers, contact names, IDs, and call-log rows are never forwarded.
+     */
+    fun syncDeviceSummary(context: Context, deviceId: String, summary: JSONObject): JSONObject {
         require(deviceId.isNotBlank()) { "Device registration is not ready." }
-        return post(context, "/api/devices/" + java.net.URLEncoder.encode(deviceId, "UTF-8") + "/summary", summary)
+        val consent = context.getSharedPreferences("familyguard_summary_consent", Context.MODE_PRIVATE)
+        val appsEnabled = consent.getBoolean("installed_apps_sync", false) && hasUsageAccess(context)
+        val callsEnabled = consent.getBoolean("calls_contacts_sync", false) &&
+            context.checkSelfPermission(android.Manifest.permission.READ_CALL_LOG) == android.content.pm.PackageManager.PERMISSION_GRANTED &&
+            context.checkSelfPermission(android.Manifest.permission.READ_CONTACTS) == android.content.pm.PackageManager.PERMISSION_GRANTED
+
+        val safe = JSONObject()
+        if (appsEnabled) {
+            val source = summary.optJSONArray("installed_apps") ?: org.json.JSONArray()
+            val labels = org.json.JSONArray()
+            val seen = linkedSetOf<String>()
+            for (i in 0 until source.length()) {
+                val label = source.optString(i, "").trim().take(100)
+                if (label.isNotBlank() && seen.add(label) && labels.length() < 100) labels.put(label)
+            }
+            safe.put("installed_apps", labels)
+            safe.put("screen_time_minutes", summary.optInt("screen_time_minutes", 0).coerceIn(0, 1440))
+        } else {
+            safe.put("installed_apps", org.json.JSONArray())
+            safe.put("screen_time_minutes", 0)
+        }
+
+        if (callsEnabled) {
+            safe.put("today_calls_count", summary.optInt("today_calls_count", 0).coerceIn(0, 10000))
+            safe.put("today_calls_duration_sec", summary.optInt("today_calls_duration_sec", 0).coerceIn(0, 86400))
+            safe.put("contacts_count", summary.optInt("contacts_count", 0).coerceIn(0, 100000))
+        } else {
+            safe.put("today_calls_count", 0)
+            safe.put("today_calls_duration_sec", 0)
+            safe.put("contacts_count", 0)
+        }
+
+        // When both toggles are OFF, allow only an all-zero clearing payload.
+        if (!appsEnabled && !callsEnabled) {
+            val clearingOnly = safe.getJSONArray("installed_apps").length() == 0 &&
+                safe.getInt("screen_time_minutes") == 0 &&
+                safe.getInt("today_calls_count") == 0 &&
+                safe.getInt("today_calls_duration_sec") == 0 &&
+                safe.getInt("contacts_count") == 0
+            require(clearingOnly) { "Summary sync is OFF." }
+        }
+        return post(context, "/api/devices/" + java.net.URLEncoder.encode(deviceId, "UTF-8") + "/summary", safe)
+    }
+
+    private fun hasUsageAccess(context: Context): Boolean {
+        val appOps = context.getSystemService(Context.APP_OPS_SERVICE) as android.app.AppOpsManager
+        @Suppress("DEPRECATION")
+        return appOps.checkOpNoThrow(
+            android.app.AppOpsManager.OPSTR_GET_USAGE_STATS,
+            android.os.Process.myUid(),
+            context.packageName
+        ) == android.app.AppOpsManager.MODE_ALLOWED
     }
 
     fun authenticate(email: String, password: String): JSONObject {
