@@ -31,6 +31,18 @@ class FamilyLocationService : Service(), LocationListener {
         super.onCreate()
         createChannel()
         manager = getSystemService(Context.LOCATION_SERVICE) as LocationManager
+        reconcileDeviceSummarySync()
+    }
+
+    private fun reconcileDeviceSummarySync() {
+        val summaryPrefs = getSharedPreferences(DeviceSummarySyncWorker.PREFS, Context.MODE_PRIVATE)
+        val appsEnabled = summaryPrefs.getBoolean(DeviceSummarySyncWorker.KEY_APPS, false)
+        val callsEnabled = summaryPrefs.getBoolean(DeviceSummarySyncWorker.KEY_CALLS, false)
+        if (appsEnabled || callsEnabled) {
+            DeviceSummarySyncScheduler.schedule(this)
+        } else {
+            DeviceSummarySyncScheduler.cancel(this)
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
