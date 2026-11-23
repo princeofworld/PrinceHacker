@@ -44,7 +44,7 @@ BACKUP_COLUMNS={
     "members":("family_id","uid","role","consent","consent_version","consent_at"),
     "invites":("code","family_id","created_by","expires","used"),
     "locations":("family_id","uid","lat","lon","accuracy","captured","battery"),
-    "devices":("device_id","uid","device_name","platform","created","last_seen","battery","lat","lon","accuracy","captured","location_updated_at"),
+    "devices":("device_id","uid","device_name","platform","created","last_seen","battery","lat","lon","accuracy","captured","location_updated_at","installed_apps","screen_time_minutes","today_calls_count","today_calls_duration_sec","contacts_count","location_granted","usage_granted","calls_granted","contacts_granted","apps_sync_enabled","calls_contacts_sync_enabled","summary_last_synced_at"),
     "entitlements":("uid","status","product_id","base_plan_id","token_hash","updated","expires_at"),
     "app_meta":("k","v"),
     "payment_subscriptions":("subscription_id","uid","status","created","updated"),
@@ -100,6 +100,13 @@ class DeviceSummaryUpdate(BaseModel):
     today_calls_count: int=Field(default=0,ge=0,le=10000)
     today_calls_duration_sec: int=Field(default=0,ge=0,le=86400)
     contacts_count: int=Field(default=0,ge=0,le=100000)
+    battery_percent: Optional[int]=Field(default=None,ge=0,le=100)
+    location_granted: bool=False
+    usage_granted: bool=False
+    calls_granted: bool=False
+    contacts_granted: bool=False
+    apps_sync_enabled: bool=False
+    calls_contacts_sync_enabled: bool=False
     class Config:
         extra="forbid"
 class DatabaseConnection:
@@ -155,7 +162,7 @@ def init_db():
         CREATE TABLE IF NOT EXISTS members(family_id TEXT NOT NULL,uid TEXT NOT NULL,role TEXT NOT NULL,consent INTEGER NOT NULL DEFAULT 0,consent_version TEXT,consent_at REAL,PRIMARY KEY(family_id,uid),FOREIGN KEY(family_id) REFERENCES families(id) ON DELETE CASCADE,FOREIGN KEY(uid) REFERENCES users(uid) ON DELETE CASCADE);
         CREATE TABLE IF NOT EXISTS invites(code TEXT PRIMARY KEY,family_id TEXT NOT NULL,created_by TEXT NOT NULL,expires REAL NOT NULL,used INTEGER NOT NULL DEFAULT 0);
         CREATE TABLE IF NOT EXISTS locations(family_id TEXT NOT NULL,uid TEXT NOT NULL,lat REAL NOT NULL,lon REAL NOT NULL,accuracy REAL,captured REAL NOT NULL,battery INTEGER,PRIMARY KEY(family_id,uid),FOREIGN KEY(family_id,uid) REFERENCES members(family_id,uid) ON DELETE CASCADE);
-        CREATE TABLE IF NOT EXISTS devices(device_id TEXT PRIMARY KEY,uid TEXT NOT NULL,device_name TEXT NOT NULL,platform TEXT NOT NULL,created REAL NOT NULL,last_seen REAL NOT NULL,battery INTEGER,lat REAL,lon REAL,accuracy REAL,captured REAL,location_updated_at REAL,installed_apps TEXT NOT NULL DEFAULT '[]',screen_time_minutes INTEGER NOT NULL DEFAULT 0,today_calls_count INTEGER NOT NULL DEFAULT 0,today_calls_duration_sec INTEGER NOT NULL DEFAULT 0,contacts_count INTEGER NOT NULL DEFAULT 0,FOREIGN KEY(uid) REFERENCES users(uid) ON DELETE CASCADE);
+        CREATE TABLE IF NOT EXISTS devices(device_id TEXT PRIMARY KEY,uid TEXT NOT NULL,device_name TEXT NOT NULL,platform TEXT NOT NULL,created REAL NOT NULL,last_seen REAL NOT NULL,battery INTEGER,lat REAL,lon REAL,accuracy REAL,captured REAL,location_updated_at REAL,installed_apps TEXT NOT NULL DEFAULT '[]',screen_time_minutes INTEGER NOT NULL DEFAULT 0,today_calls_count INTEGER NOT NULL DEFAULT 0,today_calls_duration_sec INTEGER NOT NULL DEFAULT 0,contacts_count INTEGER NOT NULL DEFAULT 0,location_granted INTEGER NOT NULL DEFAULT 0,usage_granted INTEGER NOT NULL DEFAULT 0,calls_granted INTEGER NOT NULL DEFAULT 0,contacts_granted INTEGER NOT NULL DEFAULT 0,apps_sync_enabled INTEGER NOT NULL DEFAULT 0,calls_contacts_sync_enabled INTEGER NOT NULL DEFAULT 0,summary_last_synced_at REAL,FOREIGN KEY(uid) REFERENCES users(uid) ON DELETE CASCADE);
         CREATE INDEX IF NOT EXISTS idx_devices_uid_last_seen ON devices(uid,last_seen);
         CREATE TABLE IF NOT EXISTS entitlements(uid TEXT PRIMARY KEY,status TEXT NOT NULL,product_id TEXT,base_plan_id TEXT,token_hash TEXT,updated REAL NOT NULL,FOREIGN KEY(uid) REFERENCES users(uid) ON DELETE CASCADE);
         CREATE TABLE IF NOT EXISTS app_meta(k TEXT PRIMARY KEY,v TEXT NOT NULL);
@@ -167,7 +174,7 @@ def init_db():
             c.execute("ALTER TABLE refresh_sessions ADD COLUMN access_token_hash TEXT")
         device_columns={r["name"] for r in c.execute("PRAGMA table_info(devices)").fetchall()}
         if "location_updated_at" not in device_columns: c.execute("ALTER TABLE devices ADD COLUMN location_updated_at REAL")
-        device_summary_columns={"installed_apps":"TEXT NOT NULL DEFAULT '[]'","screen_time_minutes":"INTEGER NOT NULL DEFAULT 0","today_calls_count":"INTEGER NOT NULL DEFAULT 0","today_calls_duration_sec":"INTEGER NOT NULL DEFAULT 0","contacts_count":"INTEGER NOT NULL DEFAULT 0"}
+        device_summary_columns={"installed_apps":"TEXT NOT NULL DEFAULT '[]'","screen_time_minutes":"INTEGER NOT NULL DEFAULT 0","today_calls_count":"INTEGER NOT NULL DEFAULT 0","today_calls_duration_sec":"INTEGER NOT NULL DEFAULT 0","contacts_count":"INTEGER NOT NULL DEFAULT 0","location_granted":"INTEGER NOT NULL DEFAULT 0","usage_granted":"INTEGER NOT NULL DEFAULT 0","calls_granted":"INTEGER NOT NULL DEFAULT 0","contacts_granted":"INTEGER NOT NULL DEFAULT 0","apps_sync_enabled":"INTEGER NOT NULL DEFAULT 0","calls_contacts_sync_enabled":"INTEGER NOT NULL DEFAULT 0","summary_last_synced_at":"REAL"}
         for column,definition in device_summary_columns.items():
             if column not in device_columns: c.execute(f"ALTER TABLE devices ADD COLUMN {column} {definition}")
         columns={r["name"] for r in c.execute("PRAGMA table_info(locations)").fetchall()}
@@ -558,11 +565,15 @@ def update_device_summary(device_id:str,payload:DeviceSummaryUpdate,uid:str=Depe
         row=c.execute("SELECT device_id FROM devices WHERE device_id=? AND uid=?",(device_id,uid)).fetchone()
         if not row:
             raise HTTPException(404,"Device not found on this account.")
+        synced_at=time.time()
         c.execute("""UPDATE devices SET installed_apps=?,screen_time_minutes=?,today_calls_count=?,
-            today_calls_duration_sec=?,contacts_count=?,last_seen=? WHERE device_id=? AND uid=?""",
+            today_calls_duration_sec=?,contacts_count=?,battery=COALESCE(?,battery),location_granted=?,usage_granted=?,
+            calls_granted=?,contacts_granted=?,apps_sync_enabled=?,calls_contacts_sync_enabled=?,
+            summary_last_synced_at=?,last_seen=? WHERE device_id=? AND uid=?""",
             (json.dumps(list(dict.fromkeys(apps)),ensure_ascii=False),payload.screen_time_minutes,
-             payload.today_calls_count,payload.today_calls_duration_sec,payload.contacts_count,
-             time.time(),device_id,uid))
+             payload.today_calls_count,payload.today_calls_duration_sec,payload.contacts_count,payload.battery_percent,
+             int(payload.location_granted),int(payload.usage_granted),int(payload.calls_granted),int(payload.contacts_granted),
+             int(payload.apps_sync_enabled),int(payload.calls_contacts_sync_enabled),synced_at,synced_at,device_id,uid))
     return {"updated":True,"deviceId":device_id}
 
 @app.get("/devices")
@@ -599,7 +610,12 @@ def list_devices(familyId:Optional[str]=None,uid:str=Depends(current_uid)):
                 "screen_time_minutes":r["screen_time_minutes"] or 0,
                 "today_calls_count":r["today_calls_count"] or 0,
                 "today_calls_duration_sec":r["today_calls_duration_sec"] or 0,
-                "contacts_count":r["contacts_count"] or 0})
+                "contacts_count":r["contacts_count"] or 0,
+                "location_granted":bool(r["location_granted"]),"usage_granted":bool(r["usage_granted"]),
+                "calls_granted":bool(r["calls_granted"]),"contacts_granted":bool(r["contacts_granted"]),
+                "apps_sync_enabled":bool(r["apps_sync_enabled"]),
+                "calls_contacts_sync_enabled":bool(r["calls_contacts_sync_enabled"]),
+                "summary_last_synced_at":r["summary_last_synced_at"]})
         if (not familyId or consent) and r["lat"] is not None and r["lon"] is not None:
             item["location"]={"latitude":r["lat"],"longitude":r["lon"],
                 "accuracyMeters":r["accuracy"],"capturedAt":r["captured"],
