@@ -422,7 +422,7 @@ def test_device_location_requires_explicit_family_consent(api):
 
 
 def test_device_summary_endpoint_persists_owner_only_aggregates(api):
-    _, client = api
+    main, client = api
     _, _, owner_headers = register(client)
     device_id = "device-" + uuid.uuid4().hex[:18]
     assert client.post("/devices/register", headers=owner_headers, json={
