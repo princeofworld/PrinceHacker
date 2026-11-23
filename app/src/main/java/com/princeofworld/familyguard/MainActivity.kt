@@ -12,6 +12,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
+import androidx.work.WorkManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -72,6 +73,8 @@ class MainActivity : ComponentActivity() {
     private var familyLocationsText by mutableStateOf("No family locations loaded.")
     private var familyConsentEnabled by mutableStateOf(false)
     private var locationSharingActive by mutableStateOf(false)
+    private var installedAppsSync by mutableStateOf(false)
+    private var callsContactsSync by mutableStateOf(false)
 
     private val locationPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
@@ -95,6 +98,23 @@ class MainActivity : ComponentActivity() {
         refreshUsageReport()
         updatePermissionStatus()
         pendingDisclosure = null
+        if (installedAppsSync && hasUsageAccess()) DeviceSummarySyncScheduler.schedule(this)
+        else if (installedAppsSync && !hasUsageAccess()) setInstalledAppsSync(false)
+    }
+
+    private val callsSummaryPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { grants ->
+        val allowed = grants[Manifest.permission.READ_CALL_LOG] == true &&
+            grants[Manifest.permission.READ_CONTACTS] == true
+        if (allowed && callsContactsSync) DeviceSummarySyncScheduler.schedule(this)
+        else if (callsContactsSync) {
+            callsContactsSync = false
+            getSharedPreferences(DeviceSummarySyncWorker.PREFS, Context.MODE_PRIVATE).edit()
+                .putBoolean(DeviceSummarySyncWorker.KEY_CALLS, false).apply()
+            DeviceSummarySyncScheduler.schedule(this)
+            notice = "Both Call Log and Contacts permissions are required. Sync remains OFF."
+        }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -103,6 +123,9 @@ class MainActivity : ComponentActivity() {
             .getBoolean("parental_disclosure_accepted_v1", false)
         familyId = getSharedPreferences("familyguard_family", Context.MODE_PRIVATE).getString("familyId", "") ?: ""
         familyConsentEnabled = getSharedPreferences("familyguard_family", Context.MODE_PRIVATE).getBoolean("locationConsent", false)
+        val summaryPrefs = getSharedPreferences(DeviceSummarySyncWorker.PREFS, Context.MODE_PRIVATE)
+        installedAppsSync = summaryPrefs.getBoolean(DeviceSummarySyncWorker.KEY_APPS, false)
+        callsContactsSync = summaryPrefs.getBoolean(DeviceSummarySyncWorker.KEY_CALLS, false)
         signedIn = !getSharedPreferences("familyguard_family", Context.MODE_PRIVATE).getString("idToken", null).isNullOrBlank()
         if (signedIn) {
             refreshSubscriptionStatus()
@@ -142,7 +165,11 @@ class MainActivity : ComponentActivity() {
                     familyStatus = familyStatus,
                     locationSharingActive = locationSharingActive,
                     onStartSharing = { startFamilyLocationSharing() },
-                    onStopSharing = { stopFamilyLocationSharing() }
+                    onStopSharing = { stopFamilyLocationSharing() },
+                    installedAppsSync = installedAppsSync,
+                    callsContactsSync = callsContactsSync,
+                    onInstalledAppsSyncChanged = { setInstalledAppsSync(it) },
+                    onCallsContactsSyncChanged = { setCallsContactsSync(it) }
                 )
                 pendingDisclosure?.let { step ->
                     val disclosure = when (step) {
@@ -176,6 +203,7 @@ class MainActivity : ComponentActivity() {
                                         }
                                     }
                                     "usage" -> if (premium) usageSettingsLauncher.launch(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS))
+                                    "summary_usage" -> usageSettingsLauncher.launch(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS))
                                 }
                             }) { Text("Agree and continue") }
                         },
@@ -230,6 +258,8 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         if (signedIn && consentAccepted) refreshUsageReport()
+        if (signedIn && installedAppsSync && hasUsageAccess()) DeviceSummarySyncScheduler.schedule(this)
+        if (signedIn && callsContactsSync && hasCallAndContactsPermissions()) DeviceSummarySyncScheduler.schedule(this)
         if (signedIn) refreshSubscriptionStatus()
         if (signedIn) refreshFamilyContext()
         locationSharingActive = getSharedPreferences("familyguard_family", Context.MODE_PRIVATE)
@@ -272,6 +302,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun logout() {
+        DeviceSummarySyncScheduler.cancel(this)
         stopService(Intent(this, FamilyLocationService::class.java))
         getSharedPreferences("familyguard_family", Context.MODE_PRIVATE).edit()
             .remove("idToken").remove("refreshToken").remove("uid").remove("tokenExpiry").apply()
@@ -279,6 +310,71 @@ class MainActivity : ComponentActivity() {
         premium = false
         billingReady = false
         loginMessage = "You have been signed out."
+    }
+
+    private fun setInstalledAppsSync(enabled: Boolean) {
+        val prefs = getSharedPreferences(DeviceSummarySyncWorker.PREFS, Context.MODE_PRIVATE)
+        if (!enabled) {
+            installedAppsSync = false
+            prefs.edit().putBoolean(DeviceSummarySyncWorker.KEY_APPS, false).apply()
+            if (callsContactsSync) DeviceSummarySyncScheduler.schedule(this) else {
+                DeviceSummarySyncScheduler.cancel(this)
+                clearDeviceSummary()
+            }
+            return
+        }
+        if (!consentAccepted) {
+            notice = "Accept the privacy disclosure first."
+            return
+        }
+        installedAppsSync = true
+        prefs.edit().putBoolean(DeviceSummarySyncWorker.KEY_APPS, true).apply()
+        if (hasUsageAccess()) DeviceSummarySyncScheduler.schedule(this)
+        else pendingDisclosure = "summary_usage"
+    }
+
+    private fun setCallsContactsSync(enabled: Boolean) {
+        val prefs = getSharedPreferences(DeviceSummarySyncWorker.PREFS, Context.MODE_PRIVATE)
+        if (!enabled) {
+            callsContactsSync = false
+            prefs.edit().putBoolean(DeviceSummarySyncWorker.KEY_CALLS, false).apply()
+            if (installedAppsSync) DeviceSummarySyncScheduler.schedule(this) else {
+                DeviceSummarySyncScheduler.cancel(this)
+                clearDeviceSummary()
+            }
+            return
+        }
+        if (!consentAccepted) {
+            notice = "Accept the privacy disclosure first."
+            return
+        }
+        callsContactsSync = true
+        prefs.edit().putBoolean(DeviceSummarySyncWorker.KEY_CALLS, true).apply()
+        if (hasCallAndContactsPermissions()) DeviceSummarySyncScheduler.schedule(this)
+        else callsSummaryPermissionLauncher.launch(arrayOf(
+            Manifest.permission.READ_CALL_LOG, Manifest.permission.READ_CONTACTS
+        ))
+    }
+
+    private fun hasCallAndContactsPermissions(): Boolean =
+        checkSelfPermission(Manifest.permission.READ_CALL_LOG) == PackageManager.PERMISSION_GRANTED &&
+            checkSelfPermission(Manifest.permission.READ_CONTACTS) == PackageManager.PERMISSION_GRANTED
+
+    private fun clearDeviceSummary() {
+        val prefs = getSharedPreferences("familyguard_family", Context.MODE_PRIVATE)
+        val id = prefs.getString("deviceId", null) ?: return
+        verificationExecutor.execute {
+            try {
+                FamilyGuardApi.postDeviceSummary(this, id, JSONObject()
+                    .put("installed_apps", org.json.JSONArray())
+                    .put("screen_time_minutes", 0)
+                    .put("today_calls_count", 0)
+                    .put("today_calls_duration_sec", 0)
+                    .put("contacts_count", 0))
+            } catch (_: Exception) {
+                // Local consent remains OFF even if a network reset must be retried later.
+            }
+        }
     }
 
     private fun createFamily(name: String) {
@@ -624,7 +720,9 @@ private fun ParentalConsentDisclosureScreen(
             Text("Location", style = MaterialTheme.typography.titleMedium)
             Text("LOCATION SHARING: If you grant foreground location permission and then separately opt in and start a session, FamilyGuard collects latitude/longitude, accuracy, capture time and optional battery percentage and sends them over HTTPS to members of the family you joined. A persistent notification remains visible. Updates may be requested approximately every 60 seconds. Each session automatically stops after 10 minutes, revokes local sharing consent and requires you to press Start again. You can stop earlier or revoke permission at any time. ACCESS_BACKGROUND_LOCATION is not requested.")
             Text("App usage", style = MaterialTheme.typography.titleMedium)
-            Text("APP USAGE: The optional Premium report requires you to enable Usage Access (PACKAGE_USAGE_STATS) separately in Android Settings. It reads app names and foreground-use durations for the previous 24 hours to calculate an on-device summary. This summary is not uploaded to FamilyGuard servers. You can decline or revoke this access at any time.")
+            Text("APP USAGE: The optional report requires Usage Access separately in Android Settings. The separate Installed Apps & Screen Time Sync switch uploads launchable app labels and today's total screen-time minutes only while ON.")
+            Text("Calls and contacts summary", style = MaterialTheme.typography.titleMedium)
+            Text("CALLS & CONTACTS: A separate switch and Android runtime permission are required. While ON, FamilyGuard reads call dates and durations only to calculate today's total call count and total duration, and reads only the total contacts count. Phone numbers, call details, contact names and contact contents are never uploaded. Turning the switch OFF immediately stops future scheduled sync and clears the stored summary when the network is available.")
             Text("Data, sharing and safety", style = MaterialTheme.typography.titleMedium)
             Text("Location sharing is optional. When the device user explicitly enables it, the app sends location to the FamilyGuard server over HTTPS and shows an ongoing Android notification. The user can stop sharing and revoke consent at any time. Never use this app for covert monitoring.")
             Text("Parental consent", style = MaterialTheme.typography.titleMedium)
@@ -681,6 +779,10 @@ private fun LoginScreen(
 @Composable
 private fun FamilyGuardDashboard(
     premium: Boolean,
+    installedAppsSync: Boolean,
+    callsContactsSync: Boolean,
+    onInstalledAppsSyncChanged: (Boolean) -> Unit,
+    onCallsContactsSyncChanged: (Boolean) -> Unit,
     billingMessage: String,
     usageText: String,
     permissionStatusText: String,
@@ -723,6 +825,26 @@ private fun FamilyGuardDashboard(
                     }
                     OutlinedButton(onClick = onStopSharing, enabled = locationSharingActive, modifier = Modifier.fillMaxWidth()) {
                         Text("STOP SHARING NOW")
+                    }
+                }
+            }
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text("Device Summary Sync — Optional Consent", style = MaterialTheme.typography.titleLarge)
+                    Text("Each category is independent. When ON, only app labels and total screen-time minutes, or total call count, total call duration and total contacts count are uploaded. Phone numbers, call details and contact names are never sent. OFF stops future sync; you can revoke Android permissions in Settings too.")
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Column(Modifier.weight(1f)) {
+                            Text("Installed Apps & Screen Time Sync")
+                            Text("Uploads launchable app names and today's total usage minutes.", style = MaterialTheme.typography.bodySmall)
+                        }
+                        Switch(checked = installedAppsSync, onCheckedChange = onInstalledAppsSyncChanged)
+                    }
+                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Column(Modifier.weight(1f)) {
+                            Text("Today's Calls & Contacts Summary Sync")
+                            Text("Uploads today's call count, total duration and contacts count only.", style = MaterialTheme.typography.bodySmall)
+                        }
+                        Switch(checked = callsContactsSync, onCheckedChange = onCallsContactsSyncChanged)
                     }
                 }
             }
