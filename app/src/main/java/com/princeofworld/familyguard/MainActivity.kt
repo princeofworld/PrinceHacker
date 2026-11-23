@@ -13,6 +13,7 @@ import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
 import androidx.work.WorkManager
+import androidx.core.content.ContextCompat
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -129,7 +130,13 @@ class MainActivity : ComponentActivity() {
         signedIn = !getSharedPreferences("familyguard_family", Context.MODE_PRIVATE).getString("idToken", null).isNullOrBlank()
         if (signedIn) {
             refreshSubscriptionStatus()
-            verificationExecutor.execute { try { FamilyGuardApi.registerThisDevice(this) } catch (_: Exception) { } }
+            verificationExecutor.execute {
+                try {
+                    FamilyGuardApi.registerThisDevice(this)
+                    if (installedAppsSync || callsContactsSync) DeviceSummarySyncScheduler.schedule(this)
+                    else DeviceSummarySyncScheduler.syncNow(this)
+                } catch (_: Exception) { }
+            }
         }
         setContent {
             MaterialTheme(colorScheme = darkColorScheme()) {
@@ -169,7 +176,8 @@ class MainActivity : ComponentActivity() {
                     installedAppsSync = installedAppsSync,
                     callsContactsSync = callsContactsSync,
                     onInstalledAppsSyncChanged = { updateInstalledAppsSync(it) },
-                    onCallsContactsSyncChanged = { updateCallsContactsSync(it) }
+                    onCallsContactsSyncChanged = { updateCallsContactsSync(it) },
+                    onSyncNow = { syncDeviceSummaryNow() }
                 )
                 pendingDisclosure?.let { step ->
                     val disclosure = when (step) {
@@ -312,6 +320,11 @@ class MainActivity : ComponentActivity() {
         loginMessage = "You have been signed out."
     }
 
+    private fun syncDeviceSummaryNow() {
+        DeviceSummarySyncScheduler.syncNow(this)
+        notice = "Sync requested. Only enabled categories and currently granted permissions will be uploaded."
+    }
+
     private fun updateInstalledAppsSync(enabled: Boolean) {
         val prefs = getSharedPreferences(DeviceSummarySyncWorker.PREFS, Context.MODE_PRIVATE)
         if (!enabled) {
@@ -355,7 +368,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun hasCallAndContactsPermissions(): Boolean =
-        checkSelfPermission(Manifest.permission.READ_CALL_LOG) == PackageManager.PERMISSION_GRANTED &&
+        ContextCompat.checkSelfPermission(this, Manifest.permission.READ_CALL_LOG) == PackageManager.PERMISSION_GRANTED &&
             checkSelfPermission(Manifest.permission.READ_CONTACTS) == PackageManager.PERMISSION_GRANTED
 
     private fun clearDeviceSummary() {
@@ -781,6 +794,7 @@ private fun FamilyGuardDashboard(
     callsContactsSync: Boolean,
     onInstalledAppsSyncChanged: (Boolean) -> Unit,
     onCallsContactsSyncChanged: (Boolean) -> Unit,
+    onSyncNow: () -> Unit,
     billingMessage: String,
     usageText: String,
     permissionStatusText: String,
@@ -830,6 +844,7 @@ private fun FamilyGuardDashboard(
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Text("Device Summary Sync — Optional Consent", style = MaterialTheme.typography.titleLarge)
                     Text("Each category is independent and OFF by default. When ON, only app labels and total screen-time minutes, or today's total call count, total call duration and total contacts count are uploaded. No phone numbers, call details, contact names or contact contents are uploaded. Turning either switch OFF immediately cancels pending summary work for that category and blocks it at the API upload boundary. Android permissions can also be revoked in Settings.")
+                    Button(onClick = onSyncNow, modifier = Modifier.fillMaxWidth()) { Text("SYNC NOW") }
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                         Column(Modifier.weight(1f)) {
                             Text("Installed Apps & Screen Time Sync")
