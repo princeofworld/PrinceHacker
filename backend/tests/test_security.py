@@ -100,7 +100,7 @@ def test_upi_utr_end_to_end_manual_approval_activates_30_day_premium(api, monkey
     assert billing["premium"] is True
     now = __import__("time").time()
     assert billing["expiresAt"] > now + 29 * 24 * 60 * 60
-    assert billing["expiresAt"] <= now + 30 * 24 * 60 * 60 + 2
+    # PostgreSQL service and GitHub runner clocks can differ slightly;\n    # allow up to five minutes while preserving the 30-day lower-bound check.\n    assert billing["expiresAt"] <= now + 30 * 24 * 60 * 60 + 300
 
     history = client.get("/payment/my-utr", headers=user_headers).json()["payments"]
     assert history[0]["status"] == "approved"
