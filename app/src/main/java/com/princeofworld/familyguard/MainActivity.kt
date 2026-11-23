@@ -99,7 +99,7 @@ class MainActivity : ComponentActivity() {
         updatePermissionStatus()
         pendingDisclosure = null
         if (installedAppsSync && hasUsageAccess()) DeviceSummarySyncScheduler.schedule(this)
-        else if (installedAppsSync && !hasUsageAccess()) setInstalledAppsSync(false)
+        else if (installedAppsSync && !hasUsageAccess()) updateInstalledAppsSync(false)
     }
 
     private val callsSummaryPermissionLauncher = registerForActivityResult(
@@ -168,8 +168,8 @@ class MainActivity : ComponentActivity() {
                     onStopSharing = { stopFamilyLocationSharing() },
                     installedAppsSync = installedAppsSync,
                     callsContactsSync = callsContactsSync,
-                    onInstalledAppsSyncChanged = { setInstalledAppsSync(it) },
-                    onCallsContactsSyncChanged = { setCallsContactsSync(it) }
+                    onInstalledAppsSyncChanged = { updateInstalledAppsSync(it) },
+                    onCallsContactsSyncChanged = { updateCallsContactsSync(it) }
                 )
                 pendingDisclosure?.let { step ->
                     val disclosure = when (step) {
@@ -312,7 +312,7 @@ class MainActivity : ComponentActivity() {
         loginMessage = "You have been signed out."
     }
 
-    private fun setInstalledAppsSync(enabled: Boolean) {
+    private fun updateInstalledAppsSync(enabled: Boolean) {
         val prefs = getSharedPreferences(DeviceSummarySyncWorker.PREFS, Context.MODE_PRIVATE)
         if (!enabled) {
             installedAppsSync = false
@@ -333,7 +333,7 @@ class MainActivity : ComponentActivity() {
         else pendingDisclosure = "summary_usage"
     }
 
-    private fun setCallsContactsSync(enabled: Boolean) {
+    private fun updateCallsContactsSync(enabled: Boolean) {
         val prefs = getSharedPreferences(DeviceSummarySyncWorker.PREFS, Context.MODE_PRIVATE)
         if (!enabled) {
             callsContactsSync = false
