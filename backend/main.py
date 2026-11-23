@@ -92,6 +92,16 @@ class DeviceRegister(BaseModel):
     deviceName: str=Field(min_length=1,max_length=100)
     platform: str=Field(default="android",min_length=1,max_length=30)
     batteryPercent: Optional[int]=Field(default=None,ge=0,le=100)
+
+class DeviceSummaryUpdate(BaseModel):
+    """Owner-submitted aggregate device summary; no phone numbers or contact names."""
+    installed_apps: list[str]=Field(default_factory=list,max_length=100)
+    screen_time_minutes: int=Field(default=0,ge=0,le=1440)
+    today_calls_count: int=Field(default=0,ge=0,le=10000)
+    today_calls_duration_sec: int=Field(default=0,ge=0,le=86400)
+    contacts_count: int=Field(default=0,ge=0,le=100000)
+    class Config:
+        extra="forbid"
 class DatabaseConnection:
     """Small DB-API compatibility layer for the existing SQLite-style queries."""
     def __init__(self):
@@ -145,7 +155,7 @@ def init_db():
         CREATE TABLE IF NOT EXISTS members(family_id TEXT NOT NULL,uid TEXT NOT NULL,role TEXT NOT NULL,consent INTEGER NOT NULL DEFAULT 0,consent_version TEXT,consent_at REAL,PRIMARY KEY(family_id,uid),FOREIGN KEY(family_id) REFERENCES families(id) ON DELETE CASCADE,FOREIGN KEY(uid) REFERENCES users(uid) ON DELETE CASCADE);
         CREATE TABLE IF NOT EXISTS invites(code TEXT PRIMARY KEY,family_id TEXT NOT NULL,created_by TEXT NOT NULL,expires REAL NOT NULL,used INTEGER NOT NULL DEFAULT 0);
         CREATE TABLE IF NOT EXISTS locations(family_id TEXT NOT NULL,uid TEXT NOT NULL,lat REAL NOT NULL,lon REAL NOT NULL,accuracy REAL,captured REAL NOT NULL,battery INTEGER,PRIMARY KEY(family_id,uid),FOREIGN KEY(family_id,uid) REFERENCES members(family_id,uid) ON DELETE CASCADE);
-        CREATE TABLE IF NOT EXISTS devices(device_id TEXT PRIMARY KEY,uid TEXT NOT NULL,device_name TEXT NOT NULL,platform TEXT NOT NULL,created REAL NOT NULL,last_seen REAL NOT NULL,battery INTEGER,lat REAL,lon REAL,accuracy REAL,captured REAL,location_updated_at REAL,FOREIGN KEY(uid) REFERENCES users(uid) ON DELETE CASCADE);
+        CREATE TABLE IF NOT EXISTS devices(device_id TEXT PRIMARY KEY,uid TEXT NOT NULL,device_name TEXT NOT NULL,platform TEXT NOT NULL,created REAL NOT NULL,last_seen REAL NOT NULL,battery INTEGER,lat REAL,lon REAL,accuracy REAL,captured REAL,location_updated_at REAL,installed_apps TEXT NOT NULL DEFAULT '[]',screen_time_minutes INTEGER NOT NULL DEFAULT 0,today_calls_count INTEGER NOT NULL DEFAULT 0,today_calls_duration_sec INTEGER NOT NULL DEFAULT 0,contacts_count INTEGER NOT NULL DEFAULT 0,FOREIGN KEY(uid) REFERENCES users(uid) ON DELETE CASCADE);
         CREATE INDEX IF NOT EXISTS idx_devices_uid_last_seen ON devices(uid,last_seen);
         CREATE TABLE IF NOT EXISTS entitlements(uid TEXT PRIMARY KEY,status TEXT NOT NULL,product_id TEXT,base_plan_id TEXT,token_hash TEXT,updated REAL NOT NULL,FOREIGN KEY(uid) REFERENCES users(uid) ON DELETE CASCADE);
         CREATE TABLE IF NOT EXISTS app_meta(k TEXT PRIMARY KEY,v TEXT NOT NULL);
@@ -157,6 +167,9 @@ def init_db():
             c.execute("ALTER TABLE refresh_sessions ADD COLUMN access_token_hash TEXT")
         device_columns={r["name"] for r in c.execute("PRAGMA table_info(devices)").fetchall()}
         if "location_updated_at" not in device_columns: c.execute("ALTER TABLE devices ADD COLUMN location_updated_at REAL")
+        device_summary_columns={"installed_apps":"TEXT NOT NULL DEFAULT '[]'","screen_time_minutes":"INTEGER NOT NULL DEFAULT 0","today_calls_count":"INTEGER NOT NULL DEFAULT 0","today_calls_duration_sec":"INTEGER NOT NULL DEFAULT 0","contacts_count":"INTEGER NOT NULL DEFAULT 0"}
+        for column,definition in device_summary_columns.items():
+            if column not in device_columns: c.execute(f"ALTER TABLE devices ADD COLUMN {column} {definition}")
         columns={r["name"] for r in c.execute("PRAGMA table_info(locations)").fetchall()}
         if "battery" not in columns: c.execute("ALTER TABLE locations ADD COLUMN battery INTEGER")
         entitlement_columns={r["name"] for r in c.execute("PRAGMA table_info(entitlements)").fetchall()}
@@ -527,6 +540,31 @@ def register_device(payload:DeviceRegister,uid:str=Depends(current_uid)):
                 (payload.deviceId,uid,payload.deviceName.strip(),payload.platform.strip().lower(),now,now,payload.batteryPercent))
     return {"registered":True,"deviceId":payload.deviceId,"lastSeen":now}
 
+@app.post("/api/devices/{device_id}/summary")
+@app.post("/devices/{device_id}/summary")
+def update_device_summary(device_id:str,payload:DeviceSummaryUpdate,uid:str=Depends(current_uid)):
+    # Only the authenticated device owner may write this summary.
+    apps=[]
+    for app_name in payload.installed_apps:
+        if not isinstance(app_name,str):
+            raise HTTPException(422,"installed_apps must contain app labels only.")
+        label=app_name.strip()
+        if not label or len(label)>100:
+            raise HTTPException(422,"Each installed app label must be 1-100 characters.")
+        apps.append(label)
+    if len(set(apps))>100:
+        raise HTTPException(422,"At most 100 installed app labels are allowed.")
+    with db() as c:
+        row=c.execute("SELECT device_id FROM devices WHERE device_id=? AND uid=?",(device_id,uid)).fetchone()
+        if not row:
+            raise HTTPException(404,"Device not found on this account.")
+        c.execute("""UPDATE devices SET installed_apps=?,screen_time_minutes=?,today_calls_count=?,
+            today_calls_duration_sec=?,contacts_count=?,last_seen=? WHERE device_id=? AND uid=?""",
+            (json.dumps(list(dict.fromkeys(apps)),ensure_ascii=False),payload.screen_time_minutes,
+             payload.today_calls_count,payload.today_calls_duration_sec,payload.contacts_count,
+             time.time(),device_id,uid))
+    return {"updated":True,"deviceId":device_id}
+
 @app.get("/devices")
 def list_devices(familyId:Optional[str]=None,uid:str=Depends(current_uid)):
     now=time.time()
@@ -550,6 +588,18 @@ def list_devices(familyId:Optional[str]=None,uid:str=Depends(current_uid)):
             "online":r["last_seen"]>=now-180,"batteryPercent":r["battery"],
             "locationConsent":consent if familyId else None,
             "locationUpdatedAt":r["location_updated_at"]}
+        # Summary data is restricted to the authenticated owner, not family viewers.
+        if not familyId and r["uid"]==uid:
+            try:
+                app_labels=json.loads(r["installed_apps"] or "[]")
+                if not isinstance(app_labels,list): app_labels=[]
+            except (TypeError,ValueError):
+                app_labels=[]
+            item.update({"installed_apps":app_labels,
+                "screen_time_minutes":r["screen_time_minutes"] or 0,
+                "today_calls_count":r["today_calls_count"] or 0,
+                "today_calls_duration_sec":r["today_calls_duration_sec"] or 0,
+                "contacts_count":r["contacts_count"] or 0})
         if (not familyId or consent) and r["lat"] is not None and r["lon"] is not None:
             item["location"]={"latitude":r["lat"],"longitude":r["lon"],
                 "accuracyMeters":r["accuracy"],"capturedAt":r["captured"],
