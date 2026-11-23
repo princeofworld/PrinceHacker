@@ -7,6 +7,7 @@ import importlib
 import os
 import sys
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 
 # Ensure the repository root is importable when pytest selects this nested file.
@@ -366,3 +367,55 @@ def test_tampered_backup_is_rejected_without_changing_live_database(api, monkeyp
     with main.db() as conn:
         row = conn.execute("SELECT uid FROM users WHERE uid=?", (user["localId"],)).fetchone()
     assert row is not None
+
+
+
+def test_device_live_location_endpoint_persists_coordinates_and_timestamp(api):
+    main, client = api
+    _, user, headers = register(client)
+    family = client.post("/family/create", headers=headers, json={"displayName": "Location test"})
+    assert family.status_code == 200, family.text
+    family_id = family.json()["familyId"]
+    device_id = "device-" + uuid.uuid4().hex[:18]
+    registered = client.post("/devices/register", headers=headers, json={
+        "deviceId": device_id, "deviceName": "Test Android", "platform": "android"
+    })
+    assert registered.status_code == 200, registered.text
+    consent = client.post("/family/consent", headers=headers, json={
+        "familyId": family_id, "shareLocation": True
+    })
+    assert consent.status_code == 200, consent.text
+    update = client.post("/devices/location", headers=headers, json={
+        "familyId": family_id, "deviceId": device_id,
+        "latitude": 13.0827, "longitude": 80.2707,
+        "accuracyMeters": 12.5, "batteryPercent": 88,
+        "capturedAt": datetime.now(timezone.utc).isoformat()
+    })
+    assert update.status_code == 200, update.text
+    response = client.get("/devices", headers=headers)
+    assert response.status_code == 200, response.text
+    device = next(item for item in response.json()["devices"] if item["deviceId"] == device_id)
+    assert device["location"]["latitude"] == 13.0827
+    assert device["location"]["longitude"] == 80.2707
+    assert device["location"]["updatedAt"] is not None
+    with main.db() as conn:
+        row = conn.execute("SELECT lat,lon,location_updated_at FROM devices WHERE device_id=?", (device_id,)).fetchone()
+        assert row is not None and row["lat"] == 13.0827 and row["lon"] == 80.2707
+        assert row["location_updated_at"] is not None
+
+
+def test_device_location_requires_explicit_family_consent(api):
+    _, client = api
+    _, _, headers = register(client)
+    family = client.post("/family/create", headers=headers, json={"displayName": "No consent"})
+    family_id = family.json()["familyId"]
+    device_id = "device-" + uuid.uuid4().hex[:18]
+    assert client.post("/devices/register", headers=headers, json={
+        "deviceId": device_id, "deviceName": "Consent test", "platform": "android"
+    }).status_code == 200
+    denied = client.post("/devices/location", headers=headers, json={
+        "familyId": family_id, "deviceId": device_id,
+        "latitude": 13.0, "longitude": 80.0,
+        "capturedAt": datetime.now(timezone.utc).isoformat()
+    })
+    assert denied.status_code == 403

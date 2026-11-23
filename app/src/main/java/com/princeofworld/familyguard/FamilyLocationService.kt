@@ -57,7 +57,7 @@ class FamilyLocationService : Service(), LocationListener {
             handler.removeCallbacks(autoStop)
             handler.postDelayed(autoStop, SESSION_DURATION_MS)
             val provider = if (fine) LocationManager.GPS_PROVIDER else LocationManager.NETWORK_PROVIDER
-            manager?.requestLocationUpdates(provider, 60_000L, 25f, this)
+            manager?.requestLocationUpdates(provider, 30_000L, 0f, this)
             manager?.getLastKnownLocation(provider)?.let { onLocationChanged(it) }
         } catch (_: SecurityException) {
             endSession(autoStopped = false)
@@ -81,7 +81,7 @@ class FamilyLocationService : Service(), LocationListener {
             try {
                 val battery = (getSystemService(Context.BATTERY_SERVICE) as BatteryManager)
                     .getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY).takeIf { it in 0..100 }
-                FamilyGuardApi.post(this, "/location/update", JSONObject()
+                FamilyGuardApi.post(this, "/devices/location", JSONObject()
                     .put("latitude", location.latitude).put("longitude", location.longitude)
                     .put("accuracyMeters", location.accuracy.toDouble())
                     .put("batteryPercent", battery ?: JSONObject.NULL)

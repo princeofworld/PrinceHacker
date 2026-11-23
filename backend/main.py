@@ -44,7 +44,7 @@ BACKUP_COLUMNS={
     "members":("family_id","uid","role","consent","consent_version","consent_at"),
     "invites":("code","family_id","created_by","expires","used"),
     "locations":("family_id","uid","lat","lon","accuracy","captured","battery"),
-    "devices":("device_id","uid","device_name","platform","created","last_seen","battery","lat","lon","accuracy","captured"),
+    "devices":("device_id","uid","device_name","platform","created","last_seen","battery","lat","lon","accuracy","captured","location_updated_at"),
     "entitlements":("uid","status","product_id","base_plan_id","token_hash","updated","expires_at"),
     "app_meta":("k","v"),
     "payment_subscriptions":("subscription_id","uid","status","created","updated"),
@@ -145,7 +145,7 @@ def init_db():
         CREATE TABLE IF NOT EXISTS members(family_id TEXT NOT NULL,uid TEXT NOT NULL,role TEXT NOT NULL,consent INTEGER NOT NULL DEFAULT 0,consent_version TEXT,consent_at REAL,PRIMARY KEY(family_id,uid),FOREIGN KEY(family_id) REFERENCES families(id) ON DELETE CASCADE,FOREIGN KEY(uid) REFERENCES users(uid) ON DELETE CASCADE);
         CREATE TABLE IF NOT EXISTS invites(code TEXT PRIMARY KEY,family_id TEXT NOT NULL,created_by TEXT NOT NULL,expires REAL NOT NULL,used INTEGER NOT NULL DEFAULT 0);
         CREATE TABLE IF NOT EXISTS locations(family_id TEXT NOT NULL,uid TEXT NOT NULL,lat REAL NOT NULL,lon REAL NOT NULL,accuracy REAL,captured REAL NOT NULL,battery INTEGER,PRIMARY KEY(family_id,uid),FOREIGN KEY(family_id,uid) REFERENCES members(family_id,uid) ON DELETE CASCADE);
-        CREATE TABLE IF NOT EXISTS devices(device_id TEXT PRIMARY KEY,uid TEXT NOT NULL,device_name TEXT NOT NULL,platform TEXT NOT NULL,created REAL NOT NULL,last_seen REAL NOT NULL,battery INTEGER,lat REAL,lon REAL,accuracy REAL,captured REAL,FOREIGN KEY(uid) REFERENCES users(uid) ON DELETE CASCADE);
+        CREATE TABLE IF NOT EXISTS devices(device_id TEXT PRIMARY KEY,uid TEXT NOT NULL,device_name TEXT NOT NULL,platform TEXT NOT NULL,created REAL NOT NULL,last_seen REAL NOT NULL,battery INTEGER,lat REAL,lon REAL,accuracy REAL,captured REAL,location_updated_at REAL,FOREIGN KEY(uid) REFERENCES users(uid) ON DELETE CASCADE);
         CREATE INDEX IF NOT EXISTS idx_devices_uid_last_seen ON devices(uid,last_seen);
         CREATE TABLE IF NOT EXISTS entitlements(uid TEXT PRIMARY KEY,status TEXT NOT NULL,product_id TEXT,base_plan_id TEXT,token_hash TEXT,updated REAL NOT NULL,FOREIGN KEY(uid) REFERENCES users(uid) ON DELETE CASCADE);
         CREATE TABLE IF NOT EXISTS app_meta(k TEXT PRIMARY KEY,v TEXT NOT NULL);
@@ -155,6 +155,8 @@ def init_db():
         refresh_columns={r["name"] for r in c.execute("PRAGMA table_info(refresh_sessions)").fetchall()}
         if "access_token_hash" not in refresh_columns:
             c.execute("ALTER TABLE refresh_sessions ADD COLUMN access_token_hash TEXT")
+        device_columns={r["name"] for r in c.execute("PRAGMA table_info(devices)").fetchall()}
+        if "location_updated_at" not in device_columns: c.execute("ALTER TABLE devices ADD COLUMN location_updated_at REAL")
         columns={r["name"] for r in c.execute("PRAGMA table_info(locations)").fetchall()}
         if "battery" not in columns: c.execute("ALTER TABLE locations ADD COLUMN battery INTEGER")
         entitlement_columns={r["name"] for r in c.execute("PRAGMA table_info(entitlements)").fetchall()}
@@ -507,7 +509,7 @@ def set_family_consent(payload:ConsentRequest,uid:str=Depends(current_uid)):
                   (1 if payload.shareLocation else 0,payload.consentVersion if payload.shareLocation else None,now if payload.shareLocation else None,payload.familyId,uid))
         if not payload.shareLocation:
             c.execute("DELETE FROM locations WHERE family_id=? AND uid=?",(payload.familyId,uid))
-            c.execute("UPDATE devices SET lat=NULL,lon=NULL,accuracy=NULL,captured=NULL WHERE uid=?",(uid,))
+            c.execute("UPDATE devices SET lat=NULL,lon=NULL,accuracy=NULL,captured=NULL,location_updated_at=NULL WHERE uid=?",(uid,))
     return {"familyId":payload.familyId,"consent":payload.shareLocation,"revoked":not payload.shareLocation}
 
 @app.post("/devices/register")
@@ -546,10 +548,12 @@ def list_devices(familyId:Optional[str]=None,uid:str=Depends(current_uid)):
         item={"deviceId":r["device_id"],"deviceName":r["device_name"],"platform":r["platform"],
             "uid":r["member_uid"],"email":r["email"],"lastSeen":r["last_seen"],
             "online":r["last_seen"]>=now-180,"batteryPercent":r["battery"],
-            "locationConsent":consent if familyId else None}
+            "locationConsent":consent if familyId else None,
+            "locationUpdatedAt":r["location_updated_at"]}
         if (not familyId or consent) and r["lat"] is not None and r["lon"] is not None:
             item["location"]={"latitude":r["lat"],"longitude":r["lon"],
-                "accuracyMeters":r["accuracy"],"capturedAt":r["captured"]}
+                "accuracyMeters":r["accuracy"],"capturedAt":r["captured"],
+                "updatedAt":r["location_updated_at"]}
         result.append(item)
     return {"devices":result,"count":len(result),"onlineCount":sum(1 for d in result if d["online"])}
 
@@ -561,6 +565,7 @@ def remove_device(device_id:str,uid:str=Depends(current_uid)):
         c.execute("DELETE FROM devices WHERE device_id=? AND uid=?",(device_id,uid))
     return {"removed":True,"deviceId":device_id}
 
+@app.post("/devices/location")
 @app.post("/location/update")
 def update_location(payload:LocationUpdate,uid:str=Depends(current_uid)):
     now=time.time()
@@ -577,8 +582,8 @@ def update_location(payload:LocationUpdate,uid:str=Depends(current_uid)):
         if payload.deviceId:
             device=c.execute("SELECT device_id FROM devices WHERE device_id=? AND uid=?",(payload.deviceId,uid)).fetchone()
             if not device: raise HTTPException(404,"Register this device before sharing its location.")
-            c.execute("UPDATE devices SET last_seen=?,battery=?,lat=?,lon=?,accuracy=?,captured=? WHERE device_id=? AND uid=?",
-                (now,payload.batteryPercent,payload.latitude,payload.longitude,payload.accuracyMeters,captured,payload.deviceId,uid))
+            c.execute("UPDATE devices SET last_seen=?,battery=?,lat=?,lon=?,accuracy=?,captured=?,location_updated_at=? WHERE device_id=? AND uid=?",
+                (now,payload.batteryPercent,payload.latitude,payload.longitude,payload.accuracyMeters,captured,now,payload.deviceId,uid))
     return {"updated":True,"deviceId":payload.deviceId,"capturedAt":payload.capturedAt.isoformat(),"batteryPercent":payload.batteryPercent}
 
 @app.get("/location/family")
