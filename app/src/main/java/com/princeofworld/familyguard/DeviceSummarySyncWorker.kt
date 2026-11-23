@@ -47,7 +47,6 @@ class DeviceSummarySyncWorker(context: Context, params: WorkerParameters) : Work
             // Re-check both independent consent switches immediately before sending.
             if (!prefs.getBoolean(KEY_APPS, false)) body.put("installed_apps", JSONArray()).put("screen_time_minutes", 0)
             if (!prefs.getBoolean(KEY_CALLS, false)) body.put("today_calls_count", 0).put("today_calls_duration_sec", 0).put("contacts_count", 0)
-            if (!prefs.getBoolean(KEY_APPS, false) && !prefs.getBoolean(KEY_CALLS, false)) return Result.success()
             FamilyGuardApi.postDeviceSummary(applicationContext, deviceId, body)
             Result.success()
         } catch (_: SecurityException) { Result.success() }
