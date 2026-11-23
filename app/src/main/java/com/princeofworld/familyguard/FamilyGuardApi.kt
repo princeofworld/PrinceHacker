@@ -65,6 +65,15 @@ object FamilyGuardApi {
             context.checkSelfPermission(android.Manifest.permission.READ_CONTACTS) == android.content.pm.PackageManager.PERMISSION_GRANTED
 
         val safe = JSONObject()
+            .put("location_granted", summary.optBoolean("location_granted", false))
+            .put("usage_granted", summary.optBoolean("usage_granted", hasUsageAccess(context)))
+            .put("calls_granted", summary.optBoolean("calls_granted",
+                context.checkSelfPermission(android.Manifest.permission.READ_CALL_LOG) == android.content.pm.PackageManager.PERMISSION_GRANTED))
+            .put("contacts_granted", summary.optBoolean("contacts_granted",
+                context.checkSelfPermission(android.Manifest.permission.READ_CONTACTS) == android.content.pm.PackageManager.PERMISSION_GRANTED))
+            .put("apps_sync_enabled", consent.getBoolean("installed_apps_sync", false))
+            .put("calls_contacts_sync_enabled", consent.getBoolean("calls_contacts_sync", false))
+            .put("battery_percent", summary.opt("battery_percent") ?: JSONObject.NULL)
         if (appsEnabled) {
             val source = summary.optJSONArray("installed_apps") ?: org.json.JSONArray()
             val labels = org.json.JSONArray()
