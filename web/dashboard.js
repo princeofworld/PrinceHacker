@@ -14,6 +14,18 @@ ownDevices.forEach(v=>{
  let card=document.createElement("div");card.className="border border-slate-700 rounded-xl p-4 mb-3";
  card.append(node(v.deviceName+" · "+v.platform,"font-bold"),node("Device ID: "+v.deviceId,"muted text-xs break-all"),
  node((v.online?"Online":"Offline")+" · Last seen "+new Date(v.lastSeen*1000).toLocaleString()+" · Battery "+(v.batteryPercent==null?"N/A":v.batteryPercent+"%"),"muted text-sm mt-2"));
+ const permissionGrid=document.createElement("div");permissionGrid.className="grid grid-cols-2 md:grid-cols-3 gap-2 mt-3";
+ const state=(value)=>value?"ON":"OFF";
+ permissionGrid.append(
+  node("Location permission · "+state(v.location_granted),"rounded-lg border border-slate-700 px-3 py-2 text-xs"),
+  node("Usage Access · "+state(v.usage_granted),"rounded-lg border border-slate-700 px-3 py-2 text-xs"),
+  node("Call Log permission · "+state(v.calls_granted),"rounded-lg border border-slate-700 px-3 py-2 text-xs"),
+  node("Contacts permission · "+state(v.contacts_granted),"rounded-lg border border-slate-700 px-3 py-2 text-xs"),
+  node("Apps sync consent · "+state(v.apps_sync_enabled),"rounded-lg border border-slate-700 px-3 py-2 text-xs"),
+  node("Calls/contacts consent · "+state(v.calls_contacts_sync_enabled),"rounded-lg border border-slate-700 px-3 py-2 text-xs")
+ );
+ card.append(permissionGrid);
+ card.append(node("Last Synced · "+(v.summary_last_synced_at?new Date(Number(v.summary_last_synced_at)*1000).toLocaleString():"Not synced yet"),"muted text-xs mt-2"));
  addLocation(card,v);
  const summaryGrid=document.createElement("div");summaryGrid.className="grid md:grid-cols-2 gap-3 mt-4";
  const appsCard=document.createElement("section");appsCard.className="rounded-xl border border-slate-700 bg-slate-900/60 p-4";
