@@ -5,6 +5,8 @@ import android.app.AppOpsManager
 import android.app.usage.UsageStatsManager
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
+import android.os.BatteryManager
 import android.content.pm.PackageManager
 import android.provider.CallLog
 import android.provider.ContactsContract
@@ -24,6 +26,13 @@ class DeviceSummarySyncWorker(context: Context, params: WorkerParameters) : Work
             .getString("deviceId", null) ?: return Result.retry()
         return try {
             val body = JSONObject()
+                .put("location_granted", granted(Manifest.permission.ACCESS_FINE_LOCATION) || granted(Manifest.permission.ACCESS_COARSE_LOCATION))
+                .put("usage_granted", hasUsageAccess())
+                .put("calls_granted", granted(Manifest.permission.READ_CALL_LOG))
+                .put("contacts_granted", granted(Manifest.permission.READ_CONTACTS))
+                .put("apps_sync_enabled", appsOn)
+                .put("calls_contacts_sync_enabled", callsOn)
+                .put("battery_percent", batteryPercent() ?: JSONObject.NULL)
             if (appsOn && hasUsageAccess()) {
                 body.put("installed_apps", JSONArray(launchableApps()))
                 body.put("screen_time_minutes", screenTimeToday())
@@ -47,6 +56,13 @@ class DeviceSummarySyncWorker(context: Context, params: WorkerParameters) : Work
     }
 
     private fun granted(p: String) = applicationContext.checkSelfPermission(p) == PackageManager.PERMISSION_GRANTED
+    private fun batteryPercent(): Int? {
+        val status = applicationContext.registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED)) ?: return null
+        val level = status.getIntExtra(BatteryManager.EXTRA_LEVEL, -1)
+        val scale = status.getIntExtra(BatteryManager.EXTRA_SCALE, -1)
+        if (level < 0 || scale <= 0) return null
+        return (level * 100f / scale).toInt().coerceIn(0, 100)
+    }
     private fun hasUsageAccess(): Boolean {
         val ops = applicationContext.getSystemService(Context.APP_OPS_SERVICE) as AppOpsManager
         @Suppress("DEPRECATION")
