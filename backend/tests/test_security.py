@@ -434,6 +434,13 @@ def test_device_summary_endpoint_persists_owner_only_aggregates(api):
         "today_calls_count": 4,
         "today_calls_duration_sec": 360,
         "contacts_count": 83,
+        "battery_percent": 76,
+        "location_granted": True,
+        "usage_granted": True,
+        "calls_granted": True,
+        "contacts_granted": True,
+        "apps_sync_enabled": True,
+        "calls_contacts_sync_enabled": True,
     }
     updated = client.post(f"/api/devices/{device_id}/summary", headers=owner_headers, json=payload)
     assert updated.status_code == 200, updated.text
@@ -445,6 +452,19 @@ def test_device_summary_endpoint_persists_owner_only_aggregates(api):
     assert device["today_calls_count"] == 4
     assert device["today_calls_duration_sec"] == 360
     assert device["contacts_count"] == 83
+    assert device["batteryPercent"] == 76
+    assert device["location_granted"] is True
+    assert device["usage_granted"] is True
+    assert device["calls_granted"] is True
+    assert device["contacts_granted"] is True
+    assert device["apps_sync_enabled"] is True
+    assert device["calls_contacts_sync_enabled"] is True
+    assert device["summary_last_synced_at"] is not None
+    with main.db() as conn:
+        row = conn.execute("SELECT location_granted,usage_granted,calls_granted,contacts_granted,summary_last_synced_at FROM devices WHERE device_id=?", (device_id,)).fetchone()
+        assert row["location_granted"] == 1 and row["usage_granted"] == 1
+        assert row["calls_granted"] == 1 and row["contacts_granted"] == 1
+        assert row["summary_last_synced_at"] is not None
 
 
 def test_device_summary_rejects_cross_account_access_and_unknown_fields(api):
