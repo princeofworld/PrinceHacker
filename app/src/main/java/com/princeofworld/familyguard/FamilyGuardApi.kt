@@ -47,6 +47,11 @@ object FamilyGuardApi {
             .put("batteryPercent", battery ?: JSONObject.NULL))
     }
 
+    fun postDeviceSummary(context: Context, deviceId: String, summary: JSONObject): JSONObject {
+        require(deviceId.isNotBlank()) { "Device registration is not ready." }
+        return post(context, "/api/devices/" + java.net.URLEncoder.encode(deviceId, "UTF-8") + "/summary", summary)
+    }
+
     fun authenticate(email: String, password: String): JSONObject {
         require(email.isNotBlank()) { "Enter your email address." }
         require(password.isNotBlank()) { "Enter your password." }
