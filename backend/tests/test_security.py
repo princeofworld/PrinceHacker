@@ -419,3 +419,89 @@ def test_device_location_requires_explicit_family_consent(api):
         "capturedAt": datetime.now(timezone.utc).isoformat()
     })
     assert denied.status_code == 403
+
+
+def test_device_summary_endpoint_persists_owner_only_aggregates(api):
+    _, client = api
+    _, _, owner_headers = register(client)
+    device_id = "device-" + uuid.uuid4().hex[:18]
+    assert client.post("/devices/register", headers=owner_headers, json={
+        "deviceId": device_id, "deviceName": "Summary test phone", "platform": "android"
+    }).status_code == 200
+    payload = {
+        "installed_apps": ["Calendar", "Maps"],
+        "screen_time_minutes": 125,
+        "today_calls_count": 4,
+        "today_calls_duration_sec": 360,
+        "contacts_count": 83,
+    }
+    updated = client.post(f"/api/devices/{device_id}/summary", headers=owner_headers, json=payload)
+    assert updated.status_code == 200, updated.text
+    listed = client.get("/devices", headers=owner_headers)
+    assert listed.status_code == 200
+    device = next(item for item in listed.json()["devices"] if item["deviceId"] == device_id)
+    assert device["installed_apps"] == ["Calendar", "Maps"]
+    assert device["screen_time_minutes"] == 125
+    assert device["today_calls_count"] == 4
+    assert device["today_calls_duration_sec"] == 360
+    assert device["contacts_count"] == 83
+
+
+def test_device_summary_rejects_cross_account_access_and_unknown_fields(api):
+    _, client = api
+    _, _, owner_headers = register(client)
+    _, _, attacker_headers = register(client)
+    device_id = "device-" + uuid.uuid4().hex[:18]
+    assert client.post("/devices/register", headers=owner_headers, json={
+        "deviceId": device_id, "deviceName": "Private phone", "platform": "android"
+    }).status_code == 200
+    payload = {
+        "installed_apps": ["Clock"], "screen_time_minutes": 10,
+        "today_calls_count": 1, "today_calls_duration_sec": 30,
+        "contacts_count": 5,
+    }
+    assert client.post(f"/devices/{device_id}/summary", headers=attacker_headers, json=payload).status_code == 404
+    assert client.post(f"/devices/{device_id}/summary", headers=owner_headers,
+                       json={**payload, "phone_numbers": ["00000000000"]}).status_code == 422
+    own = client.get("/devices", headers=owner_headers).json()["devices"]
+    device = next(item for item in own if item["deviceId"] == device_id)
+    assert device["installed_apps"] == [] and device["today_calls_count"] == 0
+
+
+def test_device_summary_requires_authentication_and_valid_ranges(api):
+    _, client = api
+    device_id = "device-" + uuid.uuid4().hex[:18]
+    assert client.post(f"/devices/{device_id}/summary", json={}).status_code == 401
+    _, _, headers = register(client)
+    assert client.post("/devices/register", headers=headers, json={
+        "deviceId": device_id, "deviceName": "Range test", "platform": "android"
+    }).status_code == 200
+    invalid = client.post(f"/devices/{device_id}/summary", headers=headers, json={
+        "installed_apps": ["Clock"], "screen_time_minutes": 1441,
+        "today_calls_count": 0, "today_calls_duration_sec": 0, "contacts_count": 0
+    })
+    assert invalid.status_code == 422
+
+
+def test_family_device_listing_does_not_expose_owner_summary(api):
+    main, client = api
+    _, user, headers = register(client)
+    family_id = "family-" + uuid.uuid4().hex[:18]
+    device_id = "device-" + uuid.uuid4().hex[:18]
+    now = __import__("time").time()
+    with main.db() as conn:
+        conn.execute("INSERT INTO families(id,name,owner_uid,created) VALUES(?,?,?,?)",
+                     (family_id, "Summary privacy", user["localId"], now))
+        conn.execute("INSERT INTO members(family_id,uid,role,consent) VALUES(?,?,?,1)",
+                     (family_id, user["localId"], "owner"))
+    assert client.post("/devices/register", headers=headers, json={
+        "deviceId": device_id, "deviceName": "Owner device", "platform": "android"
+    }).status_code == 200
+    payload = {"installed_apps":["Mail"],"screen_time_minutes":30,"today_calls_count":2,
+               "today_calls_duration_sec":60,"contacts_count":10}
+    assert client.post(f"/devices/{device_id}/summary",headers=headers,json=payload).status_code == 200
+    family_response = client.get("/devices",params={"familyId":family_id},headers=headers)
+    assert family_response.status_code == 200
+    family_device = next(item for item in family_response.json()["devices"] if item["deviceId"]==device_id)
+    assert "installed_apps" not in family_device
+    assert "contacts_count" not in family_device
