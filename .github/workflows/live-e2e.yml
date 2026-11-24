@@ -10,7 +10,7 @@ permissions:
 
 concurrency:
   group: familyguard-live-e2e
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   live-e2e:
@@ -30,22 +30,30 @@ jobs:
         run: |
           BASE_URL="${LIVE_BASE_URL:-${RENDER_EXTERNAL_URL:-https://princehacker.onrender.com}}"
           BASE_URL="${BASE_URL%/}"
-          echo "Waiting for Render deployment at ${BASE_URL}"
-          for attempt in $(seq 1 30); do
-            health_code=$(curl -sS -o /tmp/fg-health.json -w '%{http_code}' --max-time 15 "${BASE_URL}/health" || true)
-            login_code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 15 "${BASE_URL}/login" || true)
-            dashboard_code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 15 "${BASE_URL}/dashboard" || true)
-            admin_code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 15 "${BASE_URL}/admin" || true)
-            if [[ "${health_code}" == "200" && "${login_code}" == "200" && "${dashboard_code}" == "200" && "${admin_code}" == "200" ]]; then
-              echo "Render health and all friendly dashboard routes are ready."
-              cat /tmp/fg-health.json
-              exit 0
+          echo "Waiting for Render health at ${BASE_URL} (12 bounded attempts, 5 seconds each)"
+          health_ready=false
+          for attempt in $(seq 1 12); do
+            health_code=$(curl -sS -o /tmp/fg-health.json -w '%{http_code}' --connect-timeout 1 --max-time 2 "${BASE_URL}/health" || true)
+            if [[ "${health_code}" == "200" ]]; then
+              health_ready=true
+              break
             fi
-            echo "Attempt ${attempt}/30: health=${health_code}, login=${login_code}, dashboard=${dashboard_code}, admin=${admin_code}; waiting 20 seconds."
-            sleep 20
+            echo "Health attempt ${attempt}/12 returned ${health_code:-000}"
+            if [[ "${attempt}" -lt 12 ]]; then sleep 3; fi
           done
-          echo "Render did not finish deploying the expected public routes within 10 minutes."
-          exit 1
+          if [[ "${health_ready}" != "true" ]]; then
+            echo "Render health did not become ready within the bounded 60-second window."
+            exit 1
+          fi
+          login_code=$(curl -sS -o /dev/null -w '%{http_code}' --connect-timeout 1 --max-time 3 "${BASE_URL}/login" || true)
+          dashboard_code=$(curl -sS -o /dev/null -w '%{http_code}' --connect-timeout 1 --max-time 3 "${BASE_URL}/dashboard" || true)
+          admin_code=$(curl -sS -o /dev/null -w '%{http_code}' --connect-timeout 1 --max-time 3 "${BASE_URL}/admin" || true)
+          if [[ "${login_code}" != "200" || "${dashboard_code}" != "200" || "${admin_code}" != "200" ]]; then
+            echo "Public route check failed: login=${login_code}, dashboard=${dashboard_code}, admin=${admin_code}"
+            exit 1
+          fi
+          echo "Render health and all friendly dashboard routes are ready."
+          cat /tmp/fg-health.json
 
       - name: Set up Python
         uses: actions/setup-python@v5

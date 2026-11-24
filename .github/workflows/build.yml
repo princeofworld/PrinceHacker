@@ -8,6 +8,10 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: familyguard-apk-build
+  cancel-in-progress: true
+
 jobs:
   build-apk:
     name: Build and verify FamilyGuard APK
