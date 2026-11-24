@@ -50,6 +50,22 @@ object FamilyGuardApi {
     fun postDeviceSummary(context: Context, deviceId: String, summary: JSONObject): JSONObject =
         syncDeviceSummary(context, deviceId, summary)
 
+    fun getDeviceConsent(context: Context, deviceId: String): JSONObject =
+        get(context, "/api/privacy/consent?device_id=" + java.net.URLEncoder.encode(deviceId, "UTF-8"))
+
+    fun updateDeviceConsent(context: Context, deviceId: String, location: Boolean? = null,
+                             battery: Boolean? = null, summaries: Boolean? = null): JSONObject {
+        val body = JSONObject().put("deviceId", deviceId)
+        location?.let { body.put("location", it) }
+        battery?.let { body.put("battery", it) }
+        summaries?.let { body.put("summaries", it) }
+        return post(context, "/api/privacy/consent", body)
+    }
+
+    fun getProfile(context: Context): JSONObject = get(context, "/api/profile")
+    fun updateProfile(context: Context, name: String, phone: String): JSONObject =
+        requestWithAuth(context, "/api/profile", "PUT", JSONObject().put("name", name).put("phone", phone))
+
     /**
      * Sends only the explicitly consented summary categories. This is a second consent
      * check at the network boundary, so a worker that was queued before an OFF toggle
@@ -172,6 +188,16 @@ object FamilyGuardApi {
             if (!e.message.orEmpty().contains("expired", true) && !e.message.orEmpty().contains("invalid", true)) throw e
             access = rotateRefreshToken(context)
             request(BASE_URL + path, "GET", null, access)
+        }
+    }
+
+    private fun requestWithAuth(context: Context, path: String, method: String, body: JSONObject): JSONObject {
+        var access = refreshIdToken(context)
+        return try { request(BASE_URL + path, method, body, access) }
+        catch (e: IllegalStateException) {
+            if (!e.message.orEmpty().contains("expired", true) && !e.message.orEmpty().contains("invalid", true)) throw e
+            access = rotateRefreshToken(context)
+            request(BASE_URL + path, method, body, access)
         }
     }
 

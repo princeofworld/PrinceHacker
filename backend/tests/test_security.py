@@ -385,6 +385,8 @@ def test_device_live_location_endpoint_persists_coordinates_and_timestamp(api):
         "familyId": family_id, "shareLocation": True
     })
     assert consent.status_code == 200, consent.text
+    device_consent = client.post("/api/privacy/consent", headers=headers, json={"deviceId":device_id,"location":True,"battery":True})
+    assert device_consent.status_code == 200, device_consent.text
     update = client.post("/devices/location", headers=headers, json={
         "familyId": family_id, "deviceId": device_id,
         "latitude": 13.0827, "longitude": 80.2707,
@@ -428,6 +430,7 @@ def test_device_summary_endpoint_persists_owner_only_aggregates(api):
     assert client.post("/devices/register", headers=owner_headers, json={
         "deviceId": device_id, "deviceName": "Summary test phone", "platform": "android"
     }).status_code == 200
+    assert client.post("/api/privacy/consent", headers=owner_headers, json={"deviceId":device_id,"summaries":True,"battery":True}).status_code == 200
     payload = {
         "installed_apps": ["Calendar", "Maps"],
         "screen_time_minutes": 125,
@@ -517,6 +520,7 @@ def test_family_device_listing_does_not_expose_owner_summary(api):
     assert client.post("/devices/register", headers=headers, json={
         "deviceId": device_id, "deviceName": "Owner device", "platform": "android"
     }).status_code == 200
+    assert client.post("/api/privacy/consent", headers=headers, json={"deviceId":device_id,"summaries":True}).status_code == 200
     payload = {"installed_apps":["Mail"],"screen_time_minutes":30,"today_calls_count":2,
                "today_calls_duration_sec":60,"contacts_count":10}
     assert client.post(f"/devices/{device_id}/summary",headers=headers,json=payload).status_code == 200

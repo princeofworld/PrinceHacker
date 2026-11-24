@@ -24,6 +24,15 @@ class DeviceSummarySyncWorker(context: Context, params: WorkerParameters) : Work
         val deviceId = applicationContext.getSharedPreferences("familyguard_family", Context.MODE_PRIVATE)
             .getString("deviceId", null) ?: return Result.retry()
         return try {
+            // Fetch authoritative server consent before reading any telemetry.
+            val remoteConsent = FamilyGuardApi.getDeviceConsent(applicationContext, deviceId)
+            if (!remoteConsent.optBoolean("summaries", false)) {
+                prefs.edit().putBoolean(KEY_APPS, false).putBoolean(KEY_CALLS, false).apply()
+                DeviceSummarySyncScheduler.cancel(applicationContext)
+                return Result.success()
+            }
+            val appsOn = appsOn && prefs.getBoolean(KEY_APPS, false)
+            val callsOn = callsOn && prefs.getBoolean(KEY_CALLS, false)
             val body = JSONObject()
                 .put("location_granted", granted(Manifest.permission.ACCESS_FINE_LOCATION) || granted(Manifest.permission.ACCESS_COARSE_LOCATION))
                 .put("usage_granted", hasUsageAccess())
@@ -31,7 +40,7 @@ class DeviceSummarySyncWorker(context: Context, params: WorkerParameters) : Work
                 .put("contacts_granted", granted(Manifest.permission.READ_CONTACTS))
                 .put("apps_sync_enabled", appsOn)
                 .put("calls_contacts_sync_enabled", callsOn)
-                .put("battery_percent", batteryPercent() ?: JSONObject.NULL)
+                .put("battery_percent", if (remoteConsent.optBoolean("battery", false)) batteryPercent() ?: JSONObject.NULL else JSONObject.NULL)
             if (appsOn && hasUsageAccess()) {
                 body.put("installed_apps", JSONArray(launchableApps()))
                 body.put("screen_time_minutes", screenTimeToday())
@@ -45,8 +54,8 @@ class DeviceSummarySyncWorker(context: Context, params: WorkerParameters) : Work
             } else body.put("today_calls_count", 0).put("today_calls_duration_sec", 0).put("contacts_count", 0)
 
             // Re-check both independent consent switches immediately before sending.
-            if (!prefs.getBoolean(KEY_APPS, false)) body.put("installed_apps", JSONArray()).put("screen_time_minutes", 0)
-            if (!prefs.getBoolean(KEY_CALLS, false)) body.put("today_calls_count", 0).put("today_calls_duration_sec", 0).put("contacts_count", 0)
+            if (!prefs.getBoolean(KEY_APPS, false) || !remoteConsent.optBoolean("summaries", false)) body.put("installed_apps", JSONArray()).put("screen_time_minutes", 0)
+            if (!prefs.getBoolean(KEY_CALLS, false) || !remoteConsent.optBoolean("summaries", false)) body.put("today_calls_count", 0).put("today_calls_duration_sec", 0).put("contacts_count", 0)
             FamilyGuardApi.postDeviceSummary(applicationContext, deviceId, body)
             Result.success()
         } catch (_: SecurityException) { Result.success() }
