@@ -76,6 +76,9 @@ class MainActivity : ComponentActivity() {
     private var locationSharingActive by mutableStateOf(false)
     private var installedAppsSync by mutableStateOf(false)
     private var callsContactsSync by mutableStateOf(false)
+    private var profileName by mutableStateOf("")
+    private var profilePhone by mutableStateOf("")
+    private var profileMessage by mutableStateOf("Loading profile…")
 
     private val locationPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
@@ -133,6 +136,7 @@ class MainActivity : ComponentActivity() {
             verificationExecutor.execute {
                 try {
                     FamilyGuardApi.registerThisDevice(this)
+                    refreshProfile()
                     if (installedAppsSync || callsContactsSync) DeviceSummarySyncScheduler.schedule(this)
                     else DeviceSummarySyncScheduler.syncNow(this)
                 } catch (_: Exception) { }
@@ -177,7 +181,11 @@ class MainActivity : ComponentActivity() {
                     callsContactsSync = callsContactsSync,
                     onInstalledAppsSyncChanged = { updateInstalledAppsSync(it) },
                     onCallsContactsSyncChanged = { updateCallsContactsSync(it) },
-                    onSyncNow = { syncDeviceSummaryNow() }
+                    onSyncNow = { syncDeviceSummaryNow() },
+                    profileName = profileName,
+                    profilePhone = profilePhone,
+                    profileMessage = profileMessage,
+                    onSaveProfile = { name, phone -> saveProfile(name, phone) }
                 )
                 pendingDisclosure?.let { step ->
                     val disclosure = when (step) {
@@ -270,6 +278,7 @@ class MainActivity : ComponentActivity() {
         if (signedIn && callsContactsSync && hasCallAndContactsPermissions()) DeviceSummarySyncScheduler.schedule(this)
         if (signedIn) refreshSubscriptionStatus()
         if (signedIn) refreshFamilyContext()
+        if (signedIn) refreshProfile()
         locationSharingActive = getSharedPreferences("familyguard_family", Context.MODE_PRIVATE)
             .getString("locationSessionStatus", "stopped") == "active"
         if (signedIn) verificationExecutor.execute {
@@ -295,6 +304,33 @@ class MainActivity : ComponentActivity() {
             } catch (e: Exception) {
                 runOnUiThread { familyStatus = e.message ?: "Family service request failed." }
             }
+        }
+    }
+
+    private fun refreshProfile() {
+        verificationExecutor.execute {
+            try {
+                val profile = FamilyGuardApi.getProfile(this)
+                runOnUiThread {
+                    profileName = profile.optString("name", "")
+                    profilePhone = profile.optString("phone", "")
+                    profileMessage = "Profile loaded."
+                }
+            } catch (e: Exception) { runOnUiThread { profileMessage = e.message ?: "Profile could not be loaded." } }
+        }
+    }
+
+    private fun saveProfile(name: String, phone: String) {
+        profileMessage = "Saving profile…"
+        verificationExecutor.execute {
+            try {
+                val profile = FamilyGuardApi.updateProfile(this, name, phone)
+                runOnUiThread {
+                    profileName = profile.optString("name", "")
+                    profilePhone = profile.optString("phone", "")
+                    profileMessage = "Profile saved to your FamilyGuard account."
+                }
+            } catch (e: Exception) { runOnUiThread { profileMessage = e.message ?: "Profile update failed." } }
         }
     }
 
@@ -331,25 +367,39 @@ class MainActivity : ComponentActivity() {
         notice = "Sync requested. Only enabled categories and currently granted permissions will be uploaded."
     }
 
+    private fun persistSummaryConsent() {
+        val id = getSharedPreferences("familyguard_family", Context.MODE_PRIVATE).getString("deviceId", null) ?: return
+        val enabled = installedAppsSync || callsContactsSync
+        verificationExecutor.execute {
+            try { FamilyGuardApi.updateDeviceConsent(this, id, summaries = enabled) }
+            catch (e: Exception) { runOnUiThread { notice = e.message ?: "Server consent update failed; uploads remain blocked." } }
+        }
+    }
+
     private fun updateInstalledAppsSync(enabled: Boolean) {
         val prefs = getSharedPreferences(DeviceSummarySyncWorker.PREFS, Context.MODE_PRIVATE)
         if (!enabled) {
             installedAppsSync = false
             prefs.edit().putBoolean(DeviceSummarySyncWorker.KEY_APPS, false).apply()
             DeviceSummarySyncScheduler.cancel(this)
+            persistSummaryConsent()
             if (callsContactsSync) DeviceSummarySyncScheduler.schedule(this) else clearDeviceSummary()
-            notice = "Installed Apps & Screen Time Sync is OFF. Pending summary work has been cancelled."
+            notice = "Installed Apps & Screen Time Sync is OFF. Pending work cancelled."
             return
         }
-        if (!consentAccepted) {
-            notice = "Accept the privacy disclosure first."
-            return
+        if (!consentAccepted) { notice = "Accept the privacy disclosure first."; return }
+        val id = getSharedPreferences("familyguard_family", Context.MODE_PRIVATE).getString("deviceId", null) ?: return
+        verificationExecutor.execute {
+            try {
+                FamilyGuardApi.updateDeviceConsent(this, id, summaries = true)
+                runOnUiThread {
+                    installedAppsSync = true
+                    prefs.edit().putBoolean(DeviceSummarySyncWorker.KEY_APPS, true).apply()
+                    DeviceSummarySyncScheduler.syncNow(this)
+                    if (hasUsageAccess()) DeviceSummarySyncScheduler.schedule(this) else pendingDisclosure = "summary_usage"
+                }
+            } catch (e: Exception) { runOnUiThread { notice = e.message ?: "Consent update failed; sync remains OFF." } }
         }
-        installedAppsSync = true
-        prefs.edit().putBoolean(DeviceSummarySyncWorker.KEY_APPS, true).apply()
-        DeviceSummarySyncScheduler.syncNow(this)
-        if (hasUsageAccess()) DeviceSummarySyncScheduler.schedule(this)
-        else pendingDisclosure = "summary_usage"
     }
 
     private fun updateCallsContactsSync(enabled: Boolean) {
@@ -358,21 +408,25 @@ class MainActivity : ComponentActivity() {
             callsContactsSync = false
             prefs.edit().putBoolean(DeviceSummarySyncWorker.KEY_CALLS, false).apply()
             DeviceSummarySyncScheduler.cancel(this)
+            persistSummaryConsent()
             if (installedAppsSync) DeviceSummarySyncScheduler.schedule(this) else clearDeviceSummary()
-            notice = "Today's Calls & Contacts Summary Sync is OFF. Pending summary work has been cancelled."
+            notice = "Today's Calls & Contacts Summary Sync is OFF. Pending work cancelled."
             return
         }
-        if (!consentAccepted) {
-            notice = "Accept the privacy disclosure first."
-            return
+        if (!consentAccepted) { notice = "Accept the privacy disclosure first."; return }
+        val id = getSharedPreferences("familyguard_family", Context.MODE_PRIVATE).getString("deviceId", null) ?: return
+        verificationExecutor.execute {
+            try {
+                FamilyGuardApi.updateDeviceConsent(this, id, summaries = true)
+                runOnUiThread {
+                    callsContactsSync = true
+                    prefs.edit().putBoolean(DeviceSummarySyncWorker.KEY_CALLS, true).apply()
+                    DeviceSummarySyncScheduler.syncNow(this)
+                    if (hasCallAndContactsPermissions()) DeviceSummarySyncScheduler.schedule(this)
+                    else callsSummaryPermissionLauncher.launch(arrayOf(Manifest.permission.READ_CALL_LOG, Manifest.permission.READ_CONTACTS))
+                }
+            } catch (e: Exception) { runOnUiThread { notice = e.message ?: "Consent update failed; sync remains OFF." } }
         }
-        callsContactsSync = true
-        prefs.edit().putBoolean(DeviceSummarySyncWorker.KEY_CALLS, true).apply()
-        DeviceSummarySyncScheduler.syncNow(this)
-        if (hasCallAndContactsPermissions()) DeviceSummarySyncScheduler.schedule(this)
-        else callsSummaryPermissionLauncher.launch(arrayOf(
-            Manifest.permission.READ_CALL_LOG, Manifest.permission.READ_CONTACTS
-        ))
     }
 
     private fun hasCallAndContactsPermissions(): Boolean =
@@ -476,6 +530,8 @@ class MainActivity : ComponentActivity() {
             return
         }
         runFamilyTask {
+            val deviceId = getSharedPreferences("familyguard_family", MODE_PRIVATE).getString("deviceId", null) ?: throw IllegalStateException("Register this device first.")
+            FamilyGuardApi.updateDeviceConsent(this, deviceId, location = true)
             FamilyGuardApi.post(this, "/family/consent", JSONObject().put("familyId", familyId).put("shareLocation", true))
             familyConsentEnabled = true
             getSharedPreferences("familyguard_family", MODE_PRIVATE).edit().putBoolean("locationConsent", true).apply()
@@ -494,6 +550,8 @@ class MainActivity : ComponentActivity() {
         runFamilyTask {
             val id = familyId.ifBlank { getSharedPreferences("familyguard_family", MODE_PRIVATE).getString("familyId", "") ?: "" }
             if (id.isNotBlank()) FamilyGuardApi.post(this, "/family/consent", JSONObject().put("familyId", id).put("shareLocation", false))
+            val deviceId = getSharedPreferences("familyguard_family", MODE_PRIVATE).getString("deviceId", null)
+            if (!deviceId.isNullOrBlank()) FamilyGuardApi.updateDeviceConsent(this, deviceId, location = false)
             familyConsentEnabled = false
             getSharedPreferences("familyguard_family", MODE_PRIVATE).edit().putBoolean("locationConsent", false).apply()
             "Sharing stopped and consent revoked."
@@ -817,12 +875,27 @@ private fun FamilyGuardDashboard(
     familyStatus: String,
     locationSharingActive: Boolean,
     onStartSharing: () -> Unit,
-    onStopSharing: () -> Unit
+    onStopSharing: () -> Unit,
+    profileName: String,
+    profilePhone: String,
+    profileMessage: String,
+    onSaveProfile: (String, String) -> Unit
 ) {
     Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
         Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)) {
             Text("FamilyGuard", style = MaterialTheme.typography.headlineLarge)
+            var editableName by remember(profileName) { mutableStateOf(profileName) }
+            var editablePhone by remember(profilePhone) { mutableStateOf(profilePhone) }
+            Card(modifier = Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Profile", style = MaterialTheme.typography.titleLarge)
+                    OutlinedTextField(editableName, { editableName = it }, label = { Text("Name") }, modifier = Modifier.fillMaxWidth())
+                    OutlinedTextField(editablePhone, { editablePhone = it }, label = { Text("Contact phone") }, modifier = Modifier.fillMaxWidth())
+                    Text(profileMessage, style = MaterialTheme.typography.bodySmall)
+                    Button(onClick = { onSaveProfile(editableName, editablePhone) }, modifier = Modifier.fillMaxWidth()) { Text("SAVE PROFILE") }
+                }
+            }
             Card(modifier = Modifier.fillMaxWidth(),
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)) {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
