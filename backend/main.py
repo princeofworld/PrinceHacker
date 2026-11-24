@@ -84,6 +84,7 @@ class DeviceConsentUpdate(BaseModel):
     location: Optional[bool]=None
     battery: Optional[bool]=None
     summaries: Optional[bool]=None
+    sms_summary: Optional[bool]=None
     class Config:
         extra="forbid"
 class ConsentRequest(BaseModel):
