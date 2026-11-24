@@ -35,7 +35,7 @@ INVITE_TTL_MINUTES=max(5,min(60,int(os.getenv("INVITE_TTL_MINUTES","15"))))
 MAX_BODY_BYTES=16384
 BACKUP_MAGIC=b"FGBACKUP1"
 BACKUP_FORMAT_VERSION=1
-BACKUP_TABLES=("users","refresh_sessions","rate_limits","families","members","invites","locations","devices","entitlements","app_meta","payment_subscriptions","utr_payments")
+BACKUP_TABLES=("users","refresh_sessions","rate_limits","families","members","invites","locations","devices","device_locations","sos_alerts","entitlements","app_meta","payment_subscriptions","utr_payments")
 BACKUP_COLUMNS={
     "users":("uid","email","password_hash","created"),
     "refresh_sessions":("token_hash","uid","expires","created","access_token_hash"),
@@ -44,7 +44,9 @@ BACKUP_COLUMNS={
     "members":("family_id","uid","role","consent","consent_version","consent_at"),
     "invites":("code","family_id","created_by","expires","used"),
     "locations":("family_id","uid","lat","lon","accuracy","captured","battery"),
-    "devices":("device_id","uid","device_name","platform","created","last_seen","battery","lat","lon","accuracy","captured","location_updated_at","installed_apps","screen_time_minutes","today_calls_count","today_calls_duration_sec","contacts_count","location_granted","usage_granted","calls_granted","contacts_granted","apps_sync_enabled","calls_contacts_sync_enabled","summary_last_synced_at"),
+    "devices":("device_id","uid","device_name","platform","created","last_seen","battery","lat","lon","accuracy","captured","location_updated_at","installed_apps","screen_time_minutes","today_calls_count","today_calls_duration_sec","contacts_count","location_granted","usage_granted","calls_granted","contacts_granted","apps_sync_enabled","calls_contacts_sync_enabled","summary_last_synced_at","sms_today_count","sms_safety_status"),
+    "device_locations":("id","device_id","uid","lat","lon","accuracy","captured","created"),
+    "sos_alerts":("id","device_id","uid","message","lat","lon","accuracy","captured","created","status"),
     "entitlements":("uid","status","product_id","base_plan_id","token_hash","updated","expires_at"),
     "app_meta":("k","v"),
     "payment_subscriptions":("subscription_id","uid","status","created","updated"),
@@ -255,14 +257,27 @@ def restore_backup_blob(blob:bytes,confirm_overwrite:bool=False):
         payload=json.loads(AESGCM(key).decrypt(nonce,blob[len(BACKUP_MAGIC)+12:],BACKUP_MAGIC))
     except Exception:
         raise HTTPException(400,"Backup authentication failed. Check the encryption key and file integrity.")
-    if payload.get("format_version")!=BACKUP_FORMAT_VERSION or set(payload.get("tables",{}))!=set(BACKUP_TABLES):
+    if payload.get("format_version")!=BACKUP_FORMAT_VERSION:
         raise HTTPException(400,"Backup format or database schema is not supported by this version.")
-    tables=payload["tables"]
+    tables=payload.get("tables",{})
+    # Accept format-v1 backups created before Phase 1 history tables and SMS
+    # aggregate columns were introduced. Missing additive data restores empty.
+    legacy_tables=set(BACKUP_TABLES)-{"device_locations","sos_alerts"}
+    if set(tables)==legacy_tables:
+        tables["device_locations"]=[]
+        tables["sos_alerts"]=[]
+    if set(tables)!=set(BACKUP_TABLES):
+        raise HTTPException(400,"Backup format or database schema is not supported by this version.")
     for table,rows in tables.items():
         if not isinstance(rows,list):
             raise HTTPException(400,"Backup table data is invalid.")
         for row in rows:
-            if not isinstance(row,dict) or set(row)!=set(BACKUP_COLUMNS[table]):
+            if not isinstance(row,dict):
+                raise HTTPException(400,"Backup columns do not match the supported schema.")
+            if table=="devices":
+                row.setdefault("sms_today_count",0)
+                row.setdefault("sms_safety_status","not_enabled")
+            if set(row)!=set(BACKUP_COLUMNS[table]):
                 raise HTTPException(400,"Backup columns do not match the supported schema.")
     with db() as c:
         if c.is_postgres:
