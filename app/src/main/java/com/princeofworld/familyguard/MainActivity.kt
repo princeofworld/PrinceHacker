@@ -136,7 +136,6 @@ class MainActivity : ComponentActivity() {
             refreshSubscriptionStatus()
             verificationExecutor.execute {
                 try {
-                    FamilyGuardApi.registerThisDevice(this)
                     syncRemoteDeviceConsentNow()
                     refreshProfile()
                 } catch (_: Exception) { }
@@ -181,7 +180,6 @@ class MainActivity : ComponentActivity() {
                     callsContactsSync = callsContactsSync,
                     onInstalledAppsSyncChanged = { updateInstalledAppsSync(it) },
                     onCallsContactsSyncChanged = { updateCallsContactsSync(it) },
-                    onSyncNow = { refreshDeviceConsent(manual = true) },
                     profileName = profileName,
                     profilePhone = profilePhone,
                     profileMessage = profileMessage,
@@ -354,6 +352,9 @@ class MainActivity : ComponentActivity() {
             }
         } catch (e: Exception) {
             runOnUiThread {
+                installedAppsSync = false
+                callsContactsSync = false
+                locationSharingActive = false
                 remoteConsentStatus = "Could not refresh server consent. Background collection remains blocked until consent is verified."
                 if (manual) notice = e.message ?: "Consent refresh failed. No new background sync was started."
             }
@@ -925,7 +926,6 @@ private fun FamilyGuardDashboard(
     callsContactsSync: Boolean,
     onInstalledAppsSyncChanged: (Boolean) -> Unit,
     onCallsContactsSyncChanged: (Boolean) -> Unit,
-    onSyncNow: () -> Unit,
     billingMessage: String,
     usageText: String,
     permissionStatusText: String,
