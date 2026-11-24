@@ -71,6 +71,17 @@ object FamilyGuardApi {
         return post(context, "/api/privacy/consent", body)
     }
 
+    fun sendSosAlert(context: Context, deviceId: String, location: android.location.Location): JSONObject {
+        require(deviceId.isNotBlank()) { "Device registration is not ready." }
+        val body = JSONObject()
+            .put("message", "Emergency assistance requested by the device user.")
+            .put("latitude", location.latitude)
+            .put("longitude", location.longitude)
+            .put("accuracyMeters", location.accuracy.toDouble())
+            .put("capturedAt", java.time.Instant.ofEpochMilli(location.time).toString())
+        return post(context, "/api/devices/" + java.net.URLEncoder.encode(deviceId, "UTF-8") + "/sos", body)
+    }
+
     fun getProfile(context: Context): JSONObject = get(context, "/api/profile")
     fun updateProfile(context: Context, name: String, phone: String): JSONObject =
         requestWithAuth(context, "/api/profile", "PUT", JSONObject().put("name", name).put("phone", phone))
