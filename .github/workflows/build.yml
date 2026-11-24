@@ -41,7 +41,7 @@ jobs:
       - name: Run SQLite and PostgreSQL security regression tests
         run: |
           python -m pip install --disable-pip-version-check pytest httpx
-          pytest -q backend/tests/test_security.py
+          pytest -q backend/tests
 
       - name: Validate frontend JavaScript
         run: |

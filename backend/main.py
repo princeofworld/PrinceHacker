@@ -105,6 +105,19 @@ class DeviceRegister(BaseModel):
     platform: str=Field(default="android",min_length=1,max_length=30)
     batteryPercent: Optional[int]=Field(default=None,ge=0,le=100)
 
+class SosAlertIn(BaseModel):
+    message: str=Field(default="Emergency assistance requested",min_length=1,max_length=500)
+    latitude: float=Field(ge=-90,le=90)
+    longitude: float=Field(ge=-180,le=180)
+    accuracyMeters: Optional[float]=Field(default=None,ge=0,le=100000)
+    capturedAt: datetime
+
+class SmsSummaryUpdate(BaseModel):
+    sms_today_count: int=Field(ge=0,le=10000)
+    sms_safety_status: str=Field(min_length=1,max_length=40)
+    class Config:
+        extra="forbid"
+
 class DeviceSummaryUpdate(BaseModel):
     """Owner-submitted aggregate device summary; no phone numbers or contact names."""
     installed_apps: list[str]=Field(default_factory=list,max_length=100)
@@ -180,6 +193,10 @@ def init_db():
         CREATE TABLE IF NOT EXISTS app_meta(k TEXT PRIMARY KEY,v TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS payment_subscriptions(subscription_id TEXT PRIMARY KEY,uid TEXT NOT NULL,status TEXT NOT NULL,created REAL NOT NULL,updated REAL NOT NULL,FOREIGN KEY(uid) REFERENCES users(uid) ON DELETE CASCADE);
         CREATE TABLE IF NOT EXISTS utr_payments(id TEXT PRIMARY KEY,uid TEXT NOT NULL,utr TEXT NOT NULL UNIQUE,amount_paise INTEGER NOT NULL,status TEXT NOT NULL,created REAL NOT NULL,reviewed REAL,review_note TEXT,FOREIGN KEY(uid) REFERENCES users(uid) ON DELETE CASCADE);
+        CREATE TABLE IF NOT EXISTS device_locations(id TEXT PRIMARY KEY,device_id TEXT NOT NULL,uid TEXT NOT NULL,lat REAL NOT NULL,lon REAL NOT NULL,accuracy REAL,captured REAL NOT NULL,created REAL NOT NULL,FOREIGN KEY(device_id) REFERENCES devices(device_id) ON DELETE CASCADE,FOREIGN KEY(uid) REFERENCES users(uid) ON DELETE CASCADE);
+        CREATE INDEX IF NOT EXISTS idx_device_locations_device_captured ON device_locations(device_id,captured DESC);
+        CREATE TABLE IF NOT EXISTS sos_alerts(id TEXT PRIMARY KEY,device_id TEXT NOT NULL,uid TEXT NOT NULL,message TEXT NOT NULL,lat REAL NOT NULL,lon REAL NOT NULL,accuracy REAL,captured REAL NOT NULL,created REAL NOT NULL,status TEXT NOT NULL DEFAULT 'active',FOREIGN KEY(device_id) REFERENCES devices(device_id) ON DELETE CASCADE,FOREIGN KEY(uid) REFERENCES users(uid) ON DELETE CASCADE);
+        CREATE INDEX IF NOT EXISTS idx_sos_alerts_uid_created ON sos_alerts(uid,created DESC);
         """)
         refresh_columns={r["name"] for r in c.execute("PRAGMA table_info(refresh_sessions)").fetchall()}
         if "access_token_hash" not in refresh_columns:
@@ -187,7 +204,8 @@ def init_db():
         device_columns={r["name"] for r in c.execute("PRAGMA table_info(devices)").fetchall()}
         if "location_updated_at" not in device_columns: c.execute("ALTER TABLE devices ADD COLUMN location_updated_at REAL")
         device_summary_columns={"installed_apps":"TEXT NOT NULL DEFAULT '[]'","screen_time_minutes":"INTEGER NOT NULL DEFAULT 0","today_calls_count":"INTEGER NOT NULL DEFAULT 0","today_calls_duration_sec":"INTEGER NOT NULL DEFAULT 0","contacts_count":"INTEGER NOT NULL DEFAULT 0","location_granted":"INTEGER NOT NULL DEFAULT 0","usage_granted":"INTEGER NOT NULL DEFAULT 0","calls_granted":"INTEGER NOT NULL DEFAULT 0","contacts_granted":"INTEGER NOT NULL DEFAULT 0","apps_sync_enabled":"INTEGER NOT NULL DEFAULT 0","calls_contacts_sync_enabled":"INTEGER NOT NULL DEFAULT 0","summary_last_synced_at":"REAL"}
-        for column,definition in device_summary_columns.items():
+        device_phase1_columns={"sms_today_count":"INTEGER NOT NULL DEFAULT 0","sms_safety_status":"TEXT NOT NULL DEFAULT 'not_enabled'"}
+        for column,definition in device_phase1_columns.items():
             if column not in device_columns: c.execute(f"ALTER TABLE devices ADD COLUMN {column} {definition}")
         columns={r["name"] for r in c.execute("PRAGMA table_info(locations)").fetchall()}
         if "battery" not in columns: c.execute("ALTER TABLE locations ADD COLUMN battery INTEGER")
@@ -510,13 +528,14 @@ def update_api_profile(payload:ProfileUpdate,uid:str=Depends(current_uid)):
 @app.get("/api/privacy/consent")
 def get_api_privacy_consent(device_id:str,uid:str=Depends(current_uid)):
     with db() as c: data=_device_consent(c,uid,device_id)
-    return {"deviceId":device_id,"location":bool(data.get("location")),"battery":bool(data.get("battery")),"summaries":bool(data.get("summaries"))}
+    return {"deviceId":device_id,"location":bool(data.get("location")),"battery":bool(data.get("battery")),"summaries":bool(data.get("summaries")),"sms_summary":bool(data.get("sms_summary"))}
 
 @app.post("/api/privacy/consent")
 def update_api_privacy_consent(payload:DeviceConsentUpdate,uid:str=Depends(current_uid)):
     with db() as c:
         current=_device_consent(c,uid,payload.deviceId)
         updated={key:(bool(getattr(payload,key)) if getattr(payload,key) is not None else bool(current.get(key,False))) for key in ("location","battery","summaries")}
+        updated["sms_summary"]=bool(current.get("sms_summary",False))
         _set_meta_json(c,"device_consent:"+uid+":"+payload.deviceId,updated)
         if not updated["location"]:
             c.execute("DELETE FROM locations WHERE uid=?",(uid,))
@@ -525,6 +544,8 @@ def update_api_privacy_consent(payload:DeviceConsentUpdate,uid:str=Depends(curre
             c.execute("UPDATE devices SET battery=NULL WHERE device_id=? AND uid=?",(payload.deviceId,uid))
         if not updated["summaries"]:
             c.execute("UPDATE devices SET installed_apps='[]',screen_time_minutes=0,today_calls_count=0,today_calls_duration_sec=0,contacts_count=0,summary_last_synced_at=NULL WHERE device_id=? AND uid=?",(payload.deviceId,uid))
+        if not updated["sms_summary"]:
+            c.execute("UPDATE devices SET sms_today_count=0,sms_safety_status='not_enabled' WHERE device_id=? AND uid=?",(payload.deviceId,uid))
     return {"deviceId":payload.deviceId,**updated}
 
 @app.get("/account/profile")
@@ -690,13 +711,69 @@ def list_devices(familyId:Optional[str]=None,uid:str=Depends(current_uid)):
                 "calls_granted":bool(r["calls_granted"]),"contacts_granted":bool(r["contacts_granted"]),
                 "apps_sync_enabled":bool(r["apps_sync_enabled"]),
                 "calls_contacts_sync_enabled":bool(r["calls_contacts_sync_enabled"]),
-                "summary_last_synced_at":r["summary_last_synced_at"]})
+                "summary_last_synced_at":r["summary_last_synced_at"],
+                "sms_today_count":r["sms_today_count"] or 0,
+                "sms_safety_status":r["sms_safety_status"] or "not_enabled"})
         if (not familyId or consent) and r["lat"] is not None and r["lon"] is not None:
             item["location"]={"latitude":r["lat"],"longitude":r["lon"],
                 "accuracyMeters":r["accuracy"],"capturedAt":r["captured"],
                 "updatedAt":r["location_updated_at"]}
         result.append(item)
     return {"devices":result,"count":len(result),"onlineCount":sum(1 for d in result if d["online"])}
+
+
+@app.post("/api/devices/{device_id}/sos")
+def create_sos_alert(device_id:str,payload:SosAlertIn,uid:str=Depends(current_uid)):
+    now=time.time()
+    captured=payload.capturedAt.timestamp()
+    if captured>now+300 or captured<now-10*60:
+        raise HTTPException(400,"SOS location must be freshly captured within the last 10 minutes.")
+    with db() as c:
+        consent=_device_consent(c,uid,device_id)
+        if not consent.get("location"):
+            raise HTTPException(403,"Enable location sharing consent before sending an SOS location.")
+        device=c.execute("SELECT device_id FROM devices WHERE device_id=? AND uid=?",(device_id,uid)).fetchone()
+        if not device: raise HTTPException(404,"Device not found on this account.")
+        alert_id=secrets.token_urlsafe(18)
+        c.execute("INSERT INTO sos_alerts(id,device_id,uid,message,lat,lon,accuracy,captured,created,status) VALUES(?,?,?,?,?,?,?,?,?,'active')",
+            (alert_id,device_id,uid,payload.message.strip(),payload.latitude,payload.longitude,payload.accuracyMeters,captured,now))
+    return {"sent":True,"alertId":alert_id,"deviceId":device_id,"status":"active","createdAt":now}
+
+@app.get("/api/devices/{device_id}/locations")
+def get_device_location_history(device_id:str,limit:int=100,uid:str=Depends(current_uid)):
+    if limit<1 or limit>500: raise HTTPException(422,"limit must be between 1 and 500.")
+    with db() as c:
+        consent=_device_consent(c,uid,device_id)
+        if not consent.get("location"):
+            raise HTTPException(403,"Location history is unavailable while location consent is off.")
+        rows=c.execute("SELECT id,lat,lon,accuracy,captured,created FROM device_locations WHERE device_id=? AND uid=? ORDER BY captured DESC LIMIT ?",
+            (device_id,uid,limit)).fetchall()
+    return {"deviceId":device_id,"locations":[{"id":r["id"],"latitude":r["lat"],"longitude":r["lon"],"accuracyMeters":r["accuracy"],"capturedAt":r["captured"],"createdAt":r["created"]} for r in rows],"count":len(rows)}
+
+@app.post("/api/devices/{device_id}/sms-summary")
+def update_sms_summary(device_id:str,payload:SmsSummaryUpdate,uid:str=Depends(current_uid)):
+    allowed_status={"safe","review","alert","unknown"}
+    if payload.sms_safety_status not in allowed_status:
+        raise HTTPException(422,"sms_safety_status must be safe, review, alert, or unknown.")
+    with db() as c:
+        consent=_device_consent(c,uid,device_id)
+        if not consent.get("sms_summary"):
+            raise HTTPException(403,"SMS aggregate summary is disabled by this device's owner.")
+        device=c.execute("SELECT device_id FROM devices WHERE device_id=? AND uid=?",(device_id,uid)).fetchone()
+        if not device: raise HTTPException(404,"Device not found on this account.")
+        c.execute("UPDATE devices SET sms_today_count=?,sms_safety_status=?,last_seen=? WHERE device_id=? AND uid=?",
+            (payload.sms_today_count,payload.sms_safety_status,time.time(),device_id,uid))
+    return {"updated":True,"deviceId":device_id,"sms_today_count":payload.sms_today_count,"sms_safety_status":payload.sms_safety_status}
+
+@app.get("/api/devices/{device_id}/sms-summary")
+def get_sms_summary(device_id:str,uid:str=Depends(current_uid)):
+    with db() as c:
+        consent=_device_consent(c,uid,device_id)
+        if not consent.get("sms_summary"):
+            raise HTTPException(403,"SMS aggregate summary is disabled by this device's owner.")
+        row=c.execute("SELECT sms_today_count,sms_safety_status FROM devices WHERE device_id=? AND uid=?",(device_id,uid)).fetchone()
+        if not row: raise HTTPException(404,"Device not found on this account.")
+    return {"deviceId":device_id,"sms_today_count":row["sms_today_count"],"sms_safety_status":row["sms_safety_status"]}
 
 @app.delete("/devices/{device_id}")
 def remove_device(device_id:str,uid:str=Depends(current_uid)):
@@ -730,6 +807,9 @@ def update_location(payload:LocationUpdate,uid:str=Depends(current_uid)):
             if not device: raise HTTPException(404,"Register this device before sharing its location.")
             c.execute("UPDATE devices SET last_seen=?,battery=?,lat=?,lon=?,accuracy=?,captured=?,location_updated_at=? WHERE device_id=? AND uid=?",
                 (now,payload.batteryPercent if consent.get("battery") else None,payload.latitude,payload.longitude,payload.accuracyMeters,captured,now,payload.deviceId,uid))
+            history_id=secrets.token_urlsafe(18)
+            c.execute("INSERT INTO device_locations(id,device_id,uid,lat,lon,accuracy,captured,created) VALUES(?,?,?,?,?,?,?,?)",
+                (history_id,payload.deviceId,uid,payload.latitude,payload.longitude,payload.accuracyMeters,captured,now))
     return {"updated":True,"deviceId":payload.deviceId,"capturedAt":payload.capturedAt.isoformat(),"batteryPercent":payload.batteryPercent}
 
 @app.get("/location/family")
