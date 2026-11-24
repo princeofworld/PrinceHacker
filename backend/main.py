@@ -535,8 +535,7 @@ def get_api_privacy_consent(device_id:str,uid:str=Depends(current_uid)):
 def update_api_privacy_consent(payload:DeviceConsentUpdate,uid:str=Depends(current_uid)):
     with db() as c:
         current=_device_consent(c,uid,payload.deviceId)
-        updated={key:(bool(getattr(payload,key)) if getattr(payload,key) is not None else bool(current.get(key,False))) for key in ("location","battery","summaries")}
-        updated["sms_summary"]=bool(current.get("sms_summary",False))
+        updated={key:(bool(getattr(payload,key)) if getattr(payload,key) is not None else bool(current.get(key,False))) for key in ("location","battery","summaries","sms_summary")}
         _set_meta_json(c,"device_consent:"+uid+":"+payload.deviceId,updated)
         if not updated["location"]:
             c.execute("DELETE FROM locations WHERE uid=?",(uid,))
@@ -740,6 +739,16 @@ def create_sos_alert(device_id:str,payload:SosAlertIn,uid:str=Depends(current_ui
         c.execute("INSERT INTO sos_alerts(id,device_id,uid,message,lat,lon,accuracy,captured,created,status) VALUES(?,?,?,?,?,?,?,?,?,'active')",
             (alert_id,device_id,uid,payload.message.strip(),payload.latitude,payload.longitude,payload.accuracyMeters,captured,now))
     return {"sent":True,"alertId":alert_id,"deviceId":device_id,"status":"active","createdAt":now}
+
+@app.get("/api/devices/{device_id}/sos")
+def list_sos_alerts(device_id:str,limit:int=50,uid:str=Depends(current_uid)):
+    if limit<1 or limit>200:
+        raise HTTPException(422,"limit must be between 1 and 200.")
+    with db() as c:
+        _device_consent(c,uid,device_id)
+        rows=c.execute("SELECT id,message,lat,lon,accuracy,captured,created,status FROM sos_alerts WHERE device_id=? AND uid=? ORDER BY created DESC LIMIT ?",
+            (device_id,uid,limit)).fetchall()
+    return {"deviceId":device_id,"alerts":[{"alertId":r["id"],"message":r["message"],"latitude":r["lat"],"longitude":r["lon"],"accuracyMeters":r["accuracy"],"capturedAt":r["captured"],"createdAt":r["created"],"status":r["status"]} for r in rows],"count":len(rows)}
 
 @app.get("/api/devices/{device_id}/locations")
 def get_device_location_history(device_id:str,limit:int=100,uid:str=Depends(current_uid)):
