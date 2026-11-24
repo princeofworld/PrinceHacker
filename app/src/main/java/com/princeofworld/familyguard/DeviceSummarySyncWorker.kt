@@ -42,18 +42,23 @@ class DeviceSummarySyncWorker(context: Context, params: WorkerParameters) : Work
                 .put("apps_sync_enabled", appsOn)
                 .put("calls_contacts_sync_enabled", callsOn)
                 .put("battery_percent", if (remoteConsent.optBoolean("battery", false)) batteryPercent() ?: JSONObject.NULL else JSONObject.NULL)
-            if (appsOn && hasUsageAccess()) {
+            if (appsOn && prefs.getBoolean(KEY_APPS, false) && !isStopped && hasUsageAccess()) {
                 body.put("installed_apps", JSONArray(launchableApps()))
+                if (isStopped || !prefs.getBoolean(KEY_APPS, false)) return Result.success()
                 body.put("screen_time_minutes", screenTimeToday())
             } else body.put("installed_apps", JSONArray()).put("screen_time_minutes", 0)
 
-            if (callsOn && granted(Manifest.permission.READ_CALL_LOG) && granted(Manifest.permission.READ_CONTACTS)) {
+            if (isStopped) return Result.success()
+            if (callsOn && prefs.getBoolean(KEY_CALLS, false) && !isStopped &&
+                granted(Manifest.permission.READ_CALL_LOG) && granted(Manifest.permission.READ_CONTACTS)) {
                 val totals = callTotalsToday()
+                if (isStopped || !prefs.getBoolean(KEY_CALLS, false)) return Result.success()
                 body.put("today_calls_count", totals.first)
                     .put("today_calls_duration_sec", totals.second)
                     .put("contacts_count", contactCount())
             } else body.put("today_calls_count", 0).put("today_calls_duration_sec", 0).put("contacts_count", 0)
 
+            if (isStopped) return Result.success()
             // Re-check both independent consent switches immediately before sending.
             if (!prefs.getBoolean(KEY_APPS, false) || !remoteConsent.optBoolean("summaries", false)) body.put("installed_apps", JSONArray()).put("screen_time_minutes", 0)
             if (!prefs.getBoolean(KEY_CALLS, false) || !remoteConsent.optBoolean("summaries", false)) body.put("today_calls_count", 0).put("today_calls_duration_sec", 0).put("contacts_count", 0)
@@ -128,7 +133,7 @@ object DeviceSummarySyncScheduler {
             !p.getBoolean(DeviceSummarySyncWorker.KEY_CALLS, false)) { cancel(context); return }
         val wm = WorkManager.getInstance(context)
         wm.enqueueUniquePeriodicWork(DeviceSummarySyncWorker.UNIQUE_PERIODIC, ExistingPeriodicWorkPolicy.UPDATE,
-            PeriodicWorkRequestBuilder<DeviceSummarySyncWorker>(6, TimeUnit.HOURS).setConstraints(constraints()).build())
+            PeriodicWorkRequestBuilder<DeviceSummarySyncWorker>(15, TimeUnit.MINUTES).setConstraints(constraints()).build())
         syncNow(context)
     }
     fun syncNow(context: Context) {
