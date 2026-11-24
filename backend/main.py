@@ -74,6 +74,18 @@ class FamilyCreate(BaseModel):
     displayName: str=Field(min_length=1,max_length=60)
 class FamilyJoin(BaseModel):
     inviteCode: str=Field(pattern=r"^\d{6}$")
+class ProfileUpdate(BaseModel):
+    name: str=Field(default="",max_length=80)
+    phone: str=Field(default="",max_length=30)
+    class Config:
+        extra="forbid"
+class DeviceConsentUpdate(BaseModel):
+    deviceId: str=Field(min_length=16,max_length=80)
+    location: Optional[bool]=None
+    battery: Optional[bool]=None
+    summaries: Optional[bool]=None
+    class Config:
+        extra="forbid"
 class ConsentRequest(BaseModel):
     familyId: str=Field(min_length=12,max_length=64)
     shareLocation: bool
@@ -456,6 +468,65 @@ def billing_status(uid:str=Depends(current_uid)):
         paid=bool(row and row["status"]=="verified_active" and (row["expires_at"] is None or row["expires_at"]>time.time()))
     return {"plan":"premium" if paid else ("trial" if trial["active"] else "free"),"premium":active,"trial":trial,"status":row["status"] if row else ("trial" if trial["active"] else "free"),"subscriptionStatus":sub["status"] if sub else None,"updatedAt":row["updated"] if row else None,"expiresAt":row["expires_at"] if row else None}
 
+def _meta_json(c,key,default):
+    row=c.execute("SELECT v FROM app_meta WHERE k=?",(key,)).fetchone()
+    if not row: return default
+    try:
+        value=json.loads(row["v"])
+        return value if isinstance(value,dict) else default
+    except (TypeError,ValueError):
+        return default
+
+def _set_meta_json(c,key,value):
+    encoded=json.dumps(value,separators=(",",":"),ensure_ascii=False)
+    c.execute("INSERT OR IGNORE INTO app_meta(k,v) VALUES(?,?)",(key,encoded))
+    c.execute("UPDATE app_meta SET v=? WHERE k=?",(encoded,key))
+
+def _device_consent(c,uid,device_id):
+    row=c.execute("SELECT device_id FROM devices WHERE device_id=? AND uid=?",(device_id,uid)).fetchone()
+    if not row: raise HTTPException(404,"Device not found on this account.")
+    return _meta_json(c,"device_consent:"+uid+":"+device_id,{"location":False,"battery":False,"summaries":False})
+
+@app.get("/api/profile")
+def api_profile(uid:str=Depends(current_uid)):
+    with db() as c:
+        user=c.execute("SELECT uid,email,created FROM users WHERE uid=?",(uid,)).fetchone()
+        if not user: raise HTTPException(404,"Account not found")
+        data=_meta_json(c,"profile:"+uid,{"name":"","phone":""})
+    return {"uid":uid,"name":data.get("name",""),"phone":data.get("phone",""),"email":user["email"],"createdAt":user["created"]}
+
+@app.put("/api/profile")
+def update_api_profile(payload:ProfileUpdate,uid:str=Depends(current_uid)):
+    name=payload.name.strip()
+    phone=payload.phone.strip()
+    if phone and not re.fullmatch(r"[+0-9() .-]{5,30}",phone):
+        raise HTTPException(422,"Enter a valid contact phone number.")
+    with db() as c:
+        user=c.execute("SELECT uid,email FROM users WHERE uid=?",(uid,)).fetchone()
+        if not user: raise HTTPException(404,"Account not found")
+        _set_meta_json(c,"profile:"+uid,{"name":name,"phone":phone})
+    return {"updated":True,"uid":uid,"name":name,"phone":phone,"email":user["email"]}
+
+@app.get("/api/privacy/consent")
+def get_api_privacy_consent(device_id:str,uid:str=Depends(current_uid)):
+    with db() as c: data=_device_consent(c,uid,device_id)
+    return {"deviceId":device_id,"location":bool(data.get("location")),"battery":bool(data.get("battery")),"summaries":bool(data.get("summaries"))}
+
+@app.post("/api/privacy/consent")
+def update_api_privacy_consent(payload:DeviceConsentUpdate,uid:str=Depends(current_uid)):
+    with db() as c:
+        current=_device_consent(c,uid,payload.deviceId)
+        updated={key:(bool(getattr(payload,key)) if getattr(payload,key) is not None else bool(current.get(key,False))) for key in ("location","battery","summaries")}
+        _set_meta_json(c,"device_consent:"+uid+":"+payload.deviceId,updated)
+        if not updated["location"]:
+            c.execute("DELETE FROM locations WHERE uid=?",(uid,))
+            c.execute("UPDATE devices SET lat=NULL,lon=NULL,accuracy=NULL,captured=NULL,location_updated_at=NULL WHERE device_id=? AND uid=?",(payload.deviceId,uid))
+        if not updated["battery"]:
+            c.execute("UPDATE devices SET battery=NULL WHERE device_id=? AND uid=?",(payload.deviceId,uid))
+        if not updated["summaries"]:
+            c.execute("UPDATE devices SET installed_apps='[]',screen_time_minutes=0,today_calls_count=0,today_calls_duration_sec=0,contacts_count=0,summary_last_synced_at=NULL WHERE device_id=? AND uid=?",(payload.deviceId,uid))
+    return {"deviceId":payload.deviceId,**updated}
+
 @app.get("/account/profile")
 def account_profile(uid:str=Depends(current_uid)):
     with db() as c:
@@ -536,15 +607,19 @@ def set_family_consent(payload:ConsentRequest,uid:str=Depends(current_uid)):
 def register_device(payload:DeviceRegister,uid:str=Depends(current_uid)):
     now=time.time()
     with db() as c:
+        existing_owner=c.execute("SELECT uid FROM devices WHERE device_id=?",(payload.deviceId,)).fetchone()
+        if existing_owner and existing_owner["uid"]!=uid:
+            raise HTTPException(409,"This device ID is already registered to another account.")
+        consent=_meta_json(c,"device_consent:"+uid+":"+payload.deviceId,{"location":False,"battery":False,"summaries":False})
         existing=c.execute("SELECT uid FROM devices WHERE device_id=?",(payload.deviceId,)).fetchone()
         if existing and existing["uid"]!=uid:
             raise HTTPException(409,"This device ID is already registered to another account.")
         if existing:
             c.execute("UPDATE devices SET device_name=?,platform=?,last_seen=?,battery=COALESCE(?,battery) WHERE device_id=? AND uid=?",
-                (payload.deviceName.strip(),payload.platform.strip().lower(),now,payload.batteryPercent,payload.deviceId,uid))
+                (payload.deviceName.strip(),payload.platform.strip().lower(),now,payload.batteryPercent if consent.get("battery") else None,payload.deviceId,uid))
         else:
             c.execute("INSERT INTO devices(device_id,uid,device_name,platform,created,last_seen,battery) VALUES(?,?,?,?,?,?,?)",
-                (payload.deviceId,uid,payload.deviceName.strip(),payload.platform.strip().lower(),now,now,payload.batteryPercent))
+                (payload.deviceId,uid,payload.deviceName.strip(),payload.platform.strip().lower(),now,now,payload.batteryPercent if consent.get("battery") else None))
     return {"registered":True,"deviceId":payload.deviceId,"lastSeen":now}
 
 @app.post("/api/devices/{device_id}/summary")
@@ -562,16 +637,16 @@ def update_device_summary(device_id:str,payload:DeviceSummaryUpdate,uid:str=Depe
     if len(set(apps))>100:
         raise HTTPException(422,"At most 100 installed app labels are allowed.")
     with db() as c:
-        row=c.execute("SELECT device_id FROM devices WHERE device_id=? AND uid=?",(device_id,uid)).fetchone()
-        if not row:
-            raise HTTPException(404,"Device not found on this account.")
+        consent=_device_consent(c,uid,device_id)
+        if not consent.get("summaries"):
+            raise HTTPException(403,"Device summary upload is disabled by this device's owner.")
         synced_at=time.time()
         c.execute("""UPDATE devices SET installed_apps=?,screen_time_minutes=?,today_calls_count=?,
             today_calls_duration_sec=?,contacts_count=?,battery=COALESCE(?,battery),location_granted=?,usage_granted=?,
             calls_granted=?,contacts_granted=?,apps_sync_enabled=?,calls_contacts_sync_enabled=?,
             summary_last_synced_at=?,last_seen=? WHERE device_id=? AND uid=?""",
             (json.dumps(list(dict.fromkeys(apps)),ensure_ascii=False),payload.screen_time_minutes,
-             payload.today_calls_count,payload.today_calls_duration_sec,payload.contacts_count,payload.battery_percent,
+             payload.today_calls_count,payload.today_calls_duration_sec,payload.contacts_count,payload.battery_percent if consent.get("battery") else None,
              int(payload.location_granted),int(payload.usage_granted),int(payload.calls_granted),int(payload.contacts_granted),
              int(payload.apps_sync_enabled),int(payload.calls_contacts_sync_enabled),synced_at,synced_at,device_id,uid))
     return {"updated":True,"deviceId":device_id}
@@ -636,6 +711,11 @@ def remove_device(device_id:str,uid:str=Depends(current_uid)):
 def update_location(payload:LocationUpdate,uid:str=Depends(current_uid)):
     now=time.time()
     with db() as c:
+        if not payload.deviceId:
+            raise HTTPException(400,"A registered device ID is required for location telemetry.")
+        consent=_device_consent(c,uid,payload.deviceId)
+        if not consent.get("location"):
+            raise HTTPException(403,"Location upload is disabled by this device's owner.")
         member=membership(c,uid,payload.familyId)
         if not member["consent"]:
             raise HTTPException(403,"Location sharing requires explicit family consent.")
@@ -644,12 +724,12 @@ def update_location(payload:LocationUpdate,uid:str=Depends(current_uid)):
             raise HTTPException(400,"Location timestamp is outside the accepted time window.")
         c.execute("""INSERT INTO locations(family_id,uid,lat,lon,accuracy,captured,battery) VALUES(?,?,?,?,?,?,?)
         ON CONFLICT(family_id,uid) DO UPDATE SET lat=excluded.lat,lon=excluded.lon,accuracy=excluded.accuracy,captured=excluded.captured,battery=excluded.battery""",
-        (payload.familyId,uid,payload.latitude,payload.longitude,payload.accuracyMeters,captured,payload.batteryPercent))
+        (payload.familyId,uid,payload.latitude,payload.longitude,payload.accuracyMeters,captured,payload.batteryPercent if consent.get("battery") else None))
         if payload.deviceId:
             device=c.execute("SELECT device_id FROM devices WHERE device_id=? AND uid=?",(payload.deviceId,uid)).fetchone()
             if not device: raise HTTPException(404,"Register this device before sharing its location.")
             c.execute("UPDATE devices SET last_seen=?,battery=?,lat=?,lon=?,accuracy=?,captured=?,location_updated_at=? WHERE device_id=? AND uid=?",
-                (now,payload.batteryPercent,payload.latitude,payload.longitude,payload.accuracyMeters,captured,now,payload.deviceId,uid))
+                (now,payload.batteryPercent if consent.get("battery") else None,payload.latitude,payload.longitude,payload.accuracyMeters,captured,now,payload.deviceId,uid))
     return {"updated":True,"deviceId":payload.deviceId,"capturedAt":payload.capturedAt.isoformat(),"batteryPercent":payload.batteryPercent}
 
 @app.get("/location/family")

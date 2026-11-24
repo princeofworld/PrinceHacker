@@ -525,3 +525,60 @@ def test_family_device_listing_does_not_expose_owner_summary(api):
     family_device = next(item for item in family_response.json()["devices"] if item["deviceId"]==device_id)
     assert "installed_apps" not in family_device
     assert "contacts_count" not in family_device
+
+
+def test_profile_api_owner_scope_and_billing_isolation(api):
+    _, client = api
+    _, user, headers = register(client)
+    before = client.get("/billing/status", headers=headers).json()
+    saved = client.put("/api/profile", headers=headers, json={"name":"Owner Name","phone":"+91 98765 43210"})
+    assert saved.status_code == 200, saved.text
+    loaded = client.get("/api/profile", headers=headers)
+    assert loaded.status_code == 200 and loaded.json()["name"] == "Owner Name"
+    assert loaded.json()["phone"] == "+91 98765 43210" and loaded.json()["uid"] == user["localId"]
+    assert client.get("/api/profile").status_code == 401
+    assert client.get("/billing/status", headers=headers).json() == before
+
+
+def test_privacy_consent_owner_scope_and_default_off(api):
+    _, client = api
+    _, _, owner_headers = register(client)
+    _, _, attacker_headers = register(client)
+    device_id = "device-" + uuid.uuid4().hex[:18]
+    assert client.post("/devices/register", headers=owner_headers, json={"deviceId":device_id,"deviceName":"Owner device","platform":"android"}).status_code == 200
+    initial = client.get("/api/privacy/consent", params={"device_id":device_id}, headers=owner_headers)
+    assert initial.status_code == 200
+    assert initial.json()["location"] is False and initial.json()["battery"] is False and initial.json()["summaries"] is False
+    assert client.get("/api/privacy/consent", params={"device_id":device_id}, headers=attacker_headers).status_code == 404
+    assert client.post("/api/privacy/consent", headers=attacker_headers, json={"deviceId":device_id,"summaries":True}).status_code == 404
+
+
+def test_summary_upload_blocked_and_cleared_after_consent_off(api):
+    main, client = api
+    _, _, headers = register(client)
+    device_id = "device-" + uuid.uuid4().hex[:18]
+    assert client.post("/devices/register", headers=headers, json={"deviceId":device_id,"deviceName":"Phone","platform":"android"}).status_code == 200
+    assert client.post("/api/privacy/consent", headers=headers, json={"deviceId":device_id,"summaries":True}).status_code == 200
+    payload={"installed_apps":["Calendar"],"screen_time_minutes":20,"today_calls_count":1,"today_calls_duration_sec":30,"contacts_count":5}
+    assert client.post(f"/api/devices/{device_id}/summary", headers=headers, json=payload).status_code == 200
+    assert client.post("/api/privacy/consent", headers=headers, json={"deviceId":device_id,"summaries":False}).status_code == 200
+    assert client.post(f"/api/devices/{device_id}/summary", headers=headers, json=payload).status_code == 403
+    with main.db() as c:
+        row=c.execute("SELECT installed_apps,screen_time_minutes,today_calls_count FROM devices WHERE device_id=?",(device_id,)).fetchone()
+    assert row["installed_apps"] == "[]" and row["screen_time_minutes"] == 0 and row["today_calls_count"] == 0
+
+
+def test_location_upload_requires_device_consent_and_honors_off(api):
+    _, client = api
+    _, _, headers = register(client)
+    family=client.post("/family/create",headers=headers,json={"displayName":"Location"})
+    family_id=family.json()["familyId"]
+    device_id="device-"+uuid.uuid4().hex[:18]
+    assert client.post("/devices/register",headers=headers,json={"deviceId":device_id,"deviceName":"Phone","platform":"android"}).status_code==200
+    assert client.post("/family/consent",headers=headers,json={"familyId":family_id,"shareLocation":True}).status_code==200
+    payload={"familyId":family_id,"deviceId":device_id,"latitude":13.0,"longitude":80.0,"capturedAt":datetime.now(timezone.utc).isoformat()}
+    assert client.post("/devices/location",headers=headers,json=payload).status_code==403
+    assert client.post("/api/privacy/consent",headers=headers,json={"deviceId":device_id,"location":True}).status_code==200
+    assert client.post("/devices/location",headers=headers,json=payload).status_code==200
+    assert client.post("/api/privacy/consent",headers=headers,json={"deviceId":device_id,"location":False}).status_code==200
+    assert client.post("/devices/location",headers=headers,json=payload).status_code==403
