@@ -541,7 +541,12 @@ def test_profile_api_owner_scope_and_billing_isolation(api):
     assert loaded.status_code == 200 and loaded.json()["name"] == "Owner Name"
     assert loaded.json()["phone"] == "+91 98765 43210" and loaded.json()["uid"] == user["localId"]
     assert client.get("/api/profile").status_code == 401
-    assert client.get("/billing/status", headers=headers).json() == before
+    after = client.get("/billing/status", headers=headers).json()
+    assert {k:v for k,v in after.items() if k != "trial"} == {k:v for k,v in before.items() if k != "trial"}
+    assert after["trial"]["active"] == before["trial"]["active"]
+    assert after["trial"]["endsAt"] == before["trial"]["endsAt"]
+    # Remaining seconds are time-dependent and may tick between requests.
+    assert abs(after["trial"]["secondsRemaining"] - before["trial"]["secondsRemaining"]) <= 2
 
 
 def test_privacy_consent_owner_scope_and_default_off(api):
