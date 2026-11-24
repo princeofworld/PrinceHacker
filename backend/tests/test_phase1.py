@@ -101,6 +101,41 @@ def test_sos_requires_auth_owner_and_location_consent(api):
     assert client.get(f"/api/devices/{device_id}/sos",headers=headers).json()["alerts"][0]["status"] == "resolved"
 
 
+def test_family_member_can_view_and_resolve_opted_in_device_sos(api):
+    _, client = api
+    _, parent, parent_headers = register(client)
+    _, child, child_headers = register(client)
+    family = client.post("/family/create", headers=parent_headers, json={"displayName": "SOS family"})
+    assert family.status_code == 200
+    family_id = family.json()["familyId"]
+    joined = client.post("/family/join", headers=child_headers, json={"inviteCode": family.json()["inviteCode"]})
+    assert joined.status_code == 200
+    device_id = _registered_device(client, child_headers)
+    assert client.post("/family/consent", headers=child_headers, json={
+        "familyId": family_id, "shareLocation": True
+    }).status_code == 200
+    assert client.post("/api/privacy/consent", headers=child_headers, json={
+        "deviceId": device_id, "location": True
+    }).status_code == 200
+    payload = {
+        "message": "Family assistance needed", "latitude": 13.0, "longitude": 80.0,
+        "capturedAt": datetime.now(timezone.utc).isoformat()
+    }
+    sent = client.post(f"/api/devices/{device_id}/sos", headers=child_headers, json=payload)
+    assert sent.status_code == 200, sent.text
+    url = f"/api/devices/{device_id}/sos?familyId={family_id}"
+    visible = client.get(url, headers=parent_headers)
+    assert visible.status_code == 200 and visible.json()["count"] == 1
+    alert_id = visible.json()["alerts"][0]["alertId"]
+    resolved = client.post(
+        f"/api/devices/{device_id}/sos/{alert_id}/resolve?familyId={family_id}",
+        headers=parent_headers
+    )
+    assert resolved.status_code == 200 and resolved.json()["status"] == "resolved"
+    assert client.get(url, headers=parent_headers).json()["alerts"][0]["status"] == "resolved"
+    assert client.get(f"/api/devices/{device_id}/sos?familyId={family_id}", headers=child_headers).status_code == 200
+
+
 def test_location_history_is_owner_scoped_and_consent_gated(api):
     _, client = api
     _, _, headers = register(client)
