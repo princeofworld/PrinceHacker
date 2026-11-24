@@ -759,26 +759,36 @@ def create_sos_alert(device_id:str,payload:SosAlertIn,uid:str=Depends(current_ui
             (alert_id,device_id,uid,payload.message.strip(),payload.latitude,payload.longitude,payload.accuracyMeters,captured,now))
     return {"sent":True,"alertId":alert_id,"deviceId":device_id,"status":"active","createdAt":now}
 
+def _sos_device_owner(c,uid:str,device_id:str,family_id:Optional[str]=None)->str:
+    device=c.execute("SELECT uid FROM devices WHERE device_id=?",(device_id,)).fetchone()
+    if not device: raise HTTPException(404,"Device not found.")
+    owner_uid=device["uid"]
+    if owner_uid==uid: return owner_uid
+    if not family_id: raise HTTPException(404,"Device not found on this account.")
+    membership(c,uid,family_id)
+    owner_member=c.execute("SELECT consent FROM members WHERE family_id=? AND uid=?",(family_id,owner_uid)).fetchone()
+    if not owner_member or not owner_member["consent"]:
+        raise HTTPException(404,"Device is not an opted-in member of this family.")
+    return owner_uid
+
 @app.get("/api/devices/{device_id}/sos")
-def list_sos_alerts(device_id:str,limit:int=50,uid:str=Depends(current_uid)):
+def list_sos_alerts(device_id:str,limit:int=50,familyId:Optional[str]=None,uid:str=Depends(current_uid)):
     if limit<1 or limit>200:
         raise HTTPException(422,"limit must be between 1 and 200.")
     with db() as c:
-        device=c.execute("SELECT device_id FROM devices WHERE device_id=? AND uid=?",(device_id,uid)).fetchone()
-        if not device: raise HTTPException(404,"Device not found on this account.")
+        owner_uid=_sos_device_owner(c,uid,device_id,familyId)
         rows=c.execute("SELECT id,message,lat,lon,accuracy,captured,created,status FROM sos_alerts WHERE device_id=? AND uid=? ORDER BY created DESC LIMIT ?",
-            (device_id,uid,limit)).fetchall()
+            (device_id,owner_uid,limit)).fetchall()
     return {"deviceId":device_id,"alerts":[{"alertId":r["id"],"message":r["message"],"latitude":r["lat"],"longitude":r["lon"],"accuracyMeters":r["accuracy"],"capturedAt":r["captured"],"createdAt":r["created"],"status":r["status"]} for r in rows],"count":len(rows)}
 
 @app.post("/api/devices/{device_id}/sos/{alert_id}/resolve")
-def resolve_sos_alert(device_id:str,alert_id:str,uid:str=Depends(current_uid)):
+def resolve_sos_alert(device_id:str,alert_id:str,familyId:Optional[str]=None,uid:str=Depends(current_uid)):
     with db() as c:
-        device=c.execute("SELECT device_id FROM devices WHERE device_id=? AND uid=?",(device_id,uid)).fetchone()
-        if not device: raise HTTPException(404,"Device not found on this account.")
-        alert=c.execute("SELECT status FROM sos_alerts WHERE id=? AND device_id=? AND uid=?",(alert_id,device_id,uid)).fetchone()
+        owner_uid=_sos_device_owner(c,uid,device_id,familyId)
+        alert=c.execute("SELECT status FROM sos_alerts WHERE id=? AND device_id=? AND uid=?",(alert_id,device_id,owner_uid)).fetchone()
         if not alert: raise HTTPException(404,"SOS alert not found on this account.")
         if alert["status"]=="resolved": return {"resolved":True,"alertId":alert_id,"status":"resolved"}
-        c.execute("UPDATE sos_alerts SET status='resolved' WHERE id=? AND device_id=? AND uid=?",(alert_id,device_id,uid))
+        c.execute("UPDATE sos_alerts SET status='resolved' WHERE id=? AND device_id=? AND uid=?",(alert_id,device_id,owner_uid))
     return {"resolved":True,"alertId":alert_id,"status":"resolved"}
 
 @app.get("/api/devices/{device_id}/locations")
