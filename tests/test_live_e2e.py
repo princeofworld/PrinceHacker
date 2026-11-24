@@ -56,6 +56,15 @@ def test_live_familyguard_end_to_end():
     for path in ("/login.html", "/dashboard.html", "/admin/"):
         request("GET", path, expected={200})
 
+    dashboard_html = request("GET", "/dashboard", expected={200}).text
+    for required_tab in (
+        "Overview", "Location History", "Installed Apps",
+        "SOS Alerts", "Family Management", "Premium",
+    ):
+        assert required_tab in dashboard_html, (
+            f"Dashboard is missing required tab: {required_tab}"
+        )
+
     password = os.getenv("LIVE_E2E_TEST_PASSWORD") or secrets.token_urlsafe(24)
     token = None
     device_id = "e2e-" + secrets.token_hex(18)
