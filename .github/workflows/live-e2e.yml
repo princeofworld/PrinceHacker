@@ -1,0 +1,58 @@
+name: FamilyGuard Live E2E
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: familyguard-live-e2e
+  cancel-in-progress: false
+
+jobs:
+  live-e2e:
+    name: Live production E2E (isolated CI bot)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      LIVE_BASE_URL: ${{ vars.LIVE_BASE_URL }}
+      RENDER_EXTERNAL_URL: ${{ vars.RENDER_EXTERNAL_URL }}
+      LIVE_E2E_TEST_PASSWORD: ${{ secrets.LIVE_E2E_TEST_PASSWORD }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Wait for Render auto-deploy
+        run: sleep 45
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install live test dependencies
+        run: python -m pip install --disable-pip-version-check pytest requests
+
+      - name: Run production live E2E
+        id: live-tests
+        run: pytest tests/test_live_e2e.py -v
+
+      - name: Publish live verification summary
+        if: always()
+        run: |
+          {
+            echo "## FamilyGuard Live E2E"
+            echo ""
+            echo "- Target: ${LIVE_BASE_URL:-${RENDER_EXTERNAL_URL:-https://princehacker.onrender.com}}"
+            if [[ "${{ steps.live-tests.outcome }}" == "success" ]]; then
+              echo "- Result: **100% LIVE E2E VERIFIED**"
+              echo "- Health, dashboard pages, authentication, dashboard APIs, SOS lifecycle, consent revocation, blocked uploads, and cleanup passed."
+            else
+              echo "- Result: **LIVE E2E FAILED**"
+              echo "- Inspect the test log above for the failing assertion."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

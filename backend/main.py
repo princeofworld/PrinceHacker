@@ -1109,6 +1109,20 @@ def terms_document():
     return FileResponse(Path(__file__).resolve().parent.parent/"TERMS_OF_SERVICE.md",media_type="text/markdown")
 
 
+# Friendly aliases used by the live deployment smoke tests and browser bookmarks.
+@app.get("/login", include_in_schema=False)
+def login_page_alias():
+    return FileResponse(WEB_DIR / "login.html", media_type="text/html")
+
+@app.get("/dashboard", include_in_schema=False)
+def dashboard_page_alias():
+    return FileResponse(WEB_DIR / "dashboard.html", media_type="text/html")
+
+@app.get("/admin", include_in_schema=False)
+def admin_page_alias():
+    return FileResponse(WEB_DIR / "admin" / "index.html", media_type="text/html")
+
+
 # Serve the installable browser dashboard from the same origin as the API.
 WEB_DIR = Path(__file__).resolve().parent.parent / "web"
 if WEB_DIR.is_dir():
