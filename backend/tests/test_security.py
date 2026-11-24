@@ -586,3 +586,60 @@ def test_location_upload_requires_device_consent_and_honors_off(api):
     assert client.post("/devices/location",headers=headers,json=payload).status_code==200
     assert client.post("/api/privacy/consent",headers=headers,json={"deviceId":device_id,"location":False}).status_code==200
     assert client.post("/devices/location",headers=headers,json=payload).status_code==403
+
+
+def test_sms_summary_consent_can_be_enabled_and_revoked_and_blocks_upload(api):
+    _, client = api
+    _, _, headers = register(client)
+    device_id = "device-sms-consent-0001"
+    registered = client.post("/devices/register", headers=headers, json={
+        "deviceId": device_id, "deviceName": "Test device", "platform": "android"
+    })
+    assert registered.status_code == 200, registered.text
+
+    enabled = client.post("/api/privacy/consent", headers=headers, json={
+        "deviceId": device_id, "sms_summary": True
+    })
+    assert enabled.status_code == 200, enabled.text
+    assert enabled.json()["sms_summary"] is True
+
+    uploaded = client.post(f"/api/devices/{device_id}/sms-summary", headers=headers, json={
+        "sms_today_count": 7, "sms_safety_status": "review"
+    })
+    assert uploaded.status_code == 200, uploaded.text
+
+    revoked = client.post("/api/privacy/consent", headers=headers, json={
+        "deviceId": device_id, "sms_summary": False
+    })
+    assert revoked.status_code == 200, revoked.text
+    assert revoked.json()["sms_summary"] is False
+    blocked = client.post(f"/api/devices/{device_id}/sms-summary", headers=headers, json={
+        "sms_today_count": 8, "sms_safety_status": "safe"
+    })
+    assert blocked.status_code == 403
+
+
+def test_sos_alerts_are_authenticated_and_tenant_isolated(api):
+    _, client = api
+    _, _, owner_headers = register(client)
+    _, _, other_headers = register(client)
+    device_id = "device-sos-owner-0001"
+    registered = client.post("/devices/register", headers=owner_headers, json={
+        "deviceId": device_id, "deviceName": "Owner phone", "platform": "android"
+    })
+    assert registered.status_code == 200, registered.text
+    consent = client.post("/api/privacy/consent", headers=owner_headers, json={
+        "deviceId": device_id, "location": True
+    })
+    assert consent.status_code == 200, consent.text
+    alert = client.post(f"/api/devices/{device_id}/sos", headers=owner_headers, json={
+        "message": "Need assistance", "latitude": 17.385, "longitude": 78.4867,
+        "accuracyMeters": 20, "capturedAt": datetime.now(timezone.utc).isoformat()
+    })
+    assert alert.status_code == 200, alert.text
+    listed = client.get(f"/api/devices/{device_id}/sos", headers=owner_headers)
+    assert listed.status_code == 200, listed.text
+    assert listed.json()["count"] == 1
+    assert listed.json()["alerts"][0]["alertId"] == alert.json()["alertId"]
+    assert client.get(f"/api/devices/{device_id}/sos", headers=other_headers).status_code == 404
+    assert client.get(f"/api/devices/{device_id}/sos").status_code == 401
