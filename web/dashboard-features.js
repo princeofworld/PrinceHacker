@@ -27,6 +27,7 @@
   for(const d of devices){
    const card=el("article","", "border border-slate-700 rounded-xl p-4 mb-3");
    card.append(el("h3",d.deviceName+" · "+d.platform,"font-semibold"));
+   if(d.location){const live=el("p","Latest: "+Number(d.location.latitude).toFixed(5)+", "+Number(d.location.longitude).toFixed(5)+" · Accuracy "+Math.round(Number(d.location.accuracyMeters||0))+" m · "+stamp(d.location.capturedAt),"text-sm text-teal-200 mt-2");const map=el("a","Open live location","text-teal-300 underline text-sm mt-1");map.href="https://www.google.com/maps/search/?api=1&query="+encodeURIComponent(d.location.latitude+","+d.location.longitude);map.target="_blank";map.rel="noopener noreferrer";live.append(document.createTextNode(" · "),map);card.append(live)}else card.append(el("p","No live location is currently shared.","muted text-sm mt-2"));
    const data=await api("/api/devices/"+encodeURIComponent(d.deviceId)+"/locations?limit=50");
    const rows=data.locations||[];
    if(!rows.length)card.append(el("p","No location history shared for this device.","muted text-sm mt-2"));
@@ -41,16 +42,23 @@
  }
  async function apps(){
   const root=$("fg-app-content");root.replaceChildren();const devices=await deviceData();
+  const query=($("fg-app-search")?.value||"").trim().toLowerCase();let visible=0;
   for(const d of devices){
    const card=el("article","", "border border-slate-700 rounded-xl p-4 mb-3");
    card.append(el("h3",d.deviceName+" · "+d.platform,"font-semibold"));
-   card.append(el("p","Screen time: "+Number(d.screen_time_minutes||0)+" minutes today","muted text-sm mt-2"));
    const labels=Array.isArray(d.installed_apps)?d.installed_apps:[];
-   card.append(el("p",labels.length?labels.join(" · "):"No installed-app summary shared yet.","muted text-sm mt-2 break-words"));
-   card.append(el("p","Last summary sync: "+stamp(d.summary_last_synced_at),"muted text-xs mt-2"));
+   card.append(el("p","Installed apps: "+Number(d.installed_apps_count||labels.length)+" · Listed here: "+labels.length,"text-sm text-teal-200 mt-2"));
+   card.append(el("p","Screen time today: "+Number(d.screen_time_minutes||0)+" minutes","muted text-sm mt-2"));
+   const filtered=labels.filter(x=>String(x).toLowerCase().includes(query));
+   const list=el("ul","", "mt-2 space-y-1 text-sm");
+   filtered.forEach(x=>{const li=document.createElement("li");li.textContent=x;li.className="break-words";list.append(li)});
+   if(!filtered.length)list.append(el("li",query?"No matching apps.":"No installed-app list shared yet.","muted"));
+   card.append(list,el("p","Last summary sync: "+stamp(d.summary_last_synced_at),"muted text-xs mt-3"));
+   if(query&&!filtered.length)card.classList.add("hidden");else visible++;
    root.append(card);
   }
   if(!devices.length)root.append(el("p","No registered devices yet.","muted"));
+  else if(query&&!visible)root.append(el("p","No installed apps match your search.","muted"));
  }
  async function sos(){
   const root=$("fg-sos-content");root.replaceChildren();const devices=await deviceData();let count=0;
@@ -80,6 +88,7 @@
  document.addEventListener("click",event=>{const btn=event.target.closest("[data-tab]");if(!btn)return;const name=btn.dataset.tab;if(actions[name])load(name);},{capture:true});
  $("fg-refresh-locations")?.addEventListener("click",()=>load("location-history"));
  $("fg-refresh-apps")?.addEventListener("click",()=>load("installed-apps"));
+ $("fg-app-search")?.addEventListener("input",()=>load("installed-apps"));
  $("fg-refresh-sos")?.addEventListener("click",()=>load("sos-alerts"));
  if(token())load("overview");
 })();

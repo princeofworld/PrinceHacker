@@ -111,6 +111,7 @@ object FamilyGuardApi {
             .put("calls_contacts_sync_enabled", consent.getBoolean("calls_contacts_sync", false))
             .put("battery_percent", summary.opt("battery_percent") ?: JSONObject.NULL)
         if (appsEnabled) {
+            safe.put("installed_apps_count", summary.optInt("installed_apps_count", 0).coerceIn(0, 10000))
             val source = summary.optJSONArray("installed_apps") ?: org.json.JSONArray()
             val labels = org.json.JSONArray()
             val seen = linkedSetOf<String>()
@@ -121,6 +122,7 @@ object FamilyGuardApi {
             safe.put("installed_apps", labels)
             safe.put("screen_time_minutes", summary.optInt("screen_time_minutes", 0).coerceIn(0, 1440))
         } else {
+            safe.put("installed_apps_count", 0)
             safe.put("installed_apps", org.json.JSONArray())
             safe.put("screen_time_minutes", 0)
         }
@@ -144,7 +146,8 @@ object FamilyGuardApi {
                 safe.getInt("contacts_count") == 0
             require(clearingOnly) { "Summary sync is OFF." }
         }
-        return post(context, "/api/devices/" + java.net.URLEncoder.encode(deviceId, "UTF-8") + "/summary", safe)
+        safe.put("deviceId", deviceId)
+        return post(context, "/api/device/apps", safe)
     }
 
     private fun hasUsageAccess(context: Context): Boolean {

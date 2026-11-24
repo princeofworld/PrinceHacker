@@ -43,10 +43,12 @@ class DeviceSummarySyncWorker(context: Context, params: WorkerParameters) : Work
                 .put("calls_contacts_sync_enabled", callsOn)
                 .put("battery_percent", if (remoteConsent.optBoolean("battery", false)) batteryPercent() ?: JSONObject.NULL else JSONObject.NULL)
             if (appsOn && prefs.getBoolean(KEY_APPS, false) && !isStopped && hasUsageAccess()) {
-                body.put("installed_apps", JSONArray(launchableApps()))
+                val appSnapshot = installedApps()
+                body.put("installed_apps_count", appSnapshot.first)
+                    .put("installed_apps", JSONArray(appSnapshot.second))
                 if (isStopped || !prefs.getBoolean(KEY_APPS, false)) return Result.success()
                 body.put("screen_time_minutes", screenTimeToday())
-            } else body.put("installed_apps", JSONArray()).put("screen_time_minutes", 0)
+            } else body.put("installed_apps_count", 0).put("installed_apps", JSONArray()).put("screen_time_minutes", 0)
 
             if (isStopped) return Result.success()
             if (callsOn && prefs.getBoolean(KEY_CALLS, false) && !isStopped &&
@@ -82,12 +84,21 @@ class DeviceSummarySyncWorker(context: Context, params: WorkerParameters) : Work
         return ops.checkOpNoThrow(AppOpsManager.OPSTR_GET_USAGE_STATS, android.os.Process.myUid(),
             applicationContext.packageName) == AppOpsManager.MODE_ALLOWED
     }
-    private fun launchableApps(): List<String> {
-        val intent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
-        return applicationContext.packageManager.queryIntentActivities(intent, 0).mapNotNull {
-            runCatching { applicationContext.packageManager.getApplicationLabel(it.activityInfo.applicationInfo)
-                .toString().trim().take(100).takeIf { label -> label.isNotBlank() } }.getOrNull()
+    @Suppress("DEPRECATION")
+    private fun installedApps(): Pair<Int, List<String>> {
+        val pm = applicationContext.packageManager
+        val installed = (if (android.os.Build.VERSION.SDK_INT >= 33) {
+            pm.getInstalledApplications(PackageManager.ApplicationInfoFlags.of(0))
+        } else {
+            pm.getInstalledApplications(0)
+        }).filter { it.packageName != applicationContext.packageName }
+        val labels = installed.mapNotNull { info ->
+            runCatching {
+                val label = pm.getApplicationLabel(info).toString().trim()
+                if (label.isBlank()) null else (label + " (" + info.packageName + ")").take(100)
+            }.getOrNull()
         }.distinct().sorted().take(100)
+        return installed.size.coerceAtMost(10000) to labels
     }
     private fun dayStart() = Calendar.getInstance().apply {
         set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0)

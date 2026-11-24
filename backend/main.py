@@ -44,7 +44,7 @@ BACKUP_COLUMNS={
     "members":("family_id","uid","role","consent","consent_version","consent_at"),
     "invites":("code","family_id","created_by","expires","used"),
     "locations":("family_id","uid","lat","lon","accuracy","captured","battery"),
-    "devices":("device_id","uid","device_name","platform","created","last_seen","battery","lat","lon","accuracy","captured","location_updated_at","installed_apps","screen_time_minutes","today_calls_count","today_calls_duration_sec","contacts_count","location_granted","usage_granted","calls_granted","contacts_granted","apps_sync_enabled","calls_contacts_sync_enabled","summary_last_synced_at","sms_today_count","sms_safety_status"),
+    "devices":("device_id","uid","device_name","platform","created","last_seen","battery","lat","lon","accuracy","captured","location_updated_at","installed_apps","installed_apps_count","screen_time_minutes","today_calls_count","today_calls_duration_sec","contacts_count","location_granted","usage_granted","calls_granted","contacts_granted","apps_sync_enabled","calls_contacts_sync_enabled","summary_last_synced_at","sms_today_count","sms_safety_status"),
     "device_locations":("id","device_id","uid","lat","lon","accuracy","captured","created"),
     "sos_alerts":("id","device_id","uid","message","lat","lon","accuracy","captured","created","status"),
     "entitlements":("uid","status","product_id","base_plan_id","token_hash","updated","expires_at"),
@@ -124,6 +124,7 @@ class SmsSummaryUpdate(BaseModel):
 class DeviceSummaryUpdate(BaseModel):
     """Owner-submitted aggregate device summary; no phone numbers or contact names."""
     installed_apps: list[str]=Field(default_factory=list,max_length=100)
+    installed_apps_count: int=Field(default=0,ge=0,le=10000)
     screen_time_minutes: int=Field(default=0,ge=0,le=1440)
     today_calls_count: int=Field(default=0,ge=0,le=10000)
     today_calls_duration_sec: int=Field(default=0,ge=0,le=86400)
@@ -137,6 +138,10 @@ class DeviceSummaryUpdate(BaseModel):
     calls_contacts_sync_enabled: bool=False
     class Config:
         extra="forbid"
+
+class DeviceAppsUpdate(DeviceSummaryUpdate):
+    deviceId: str=Field(min_length=16,max_length=80)
+
 class DatabaseConnection:
     """Small DB-API compatibility layer for the existing SQLite-style queries."""
     def __init__(self):
@@ -208,7 +213,7 @@ def init_db():
         if "location_updated_at" not in device_columns: c.execute("ALTER TABLE devices ADD COLUMN location_updated_at REAL")
         # Add every dashboard telemetry field to pre-existing installations.
         # Keep this additive and idempotent: never rebuild or truncate user tables.
-        device_summary_columns={"installed_apps":"TEXT NOT NULL DEFAULT '[]'","screen_time_minutes":"INTEGER NOT NULL DEFAULT 0","today_calls_count":"INTEGER NOT NULL DEFAULT 0","today_calls_duration_sec":"INTEGER NOT NULL DEFAULT 0","contacts_count":"INTEGER NOT NULL DEFAULT 0","location_granted":"INTEGER NOT NULL DEFAULT 0","usage_granted":"INTEGER NOT NULL DEFAULT 0","calls_granted":"INTEGER NOT NULL DEFAULT 0","contacts_granted":"INTEGER NOT NULL DEFAULT 0","apps_sync_enabled":"INTEGER NOT NULL DEFAULT 0","calls_contacts_sync_enabled":"INTEGER NOT NULL DEFAULT 0","summary_last_synced_at":"REAL"}
+        device_summary_columns={"installed_apps":"TEXT NOT NULL DEFAULT '[]'","installed_apps_count":"INTEGER NOT NULL DEFAULT 0","screen_time_minutes":"INTEGER NOT NULL DEFAULT 0","today_calls_count":"INTEGER NOT NULL DEFAULT 0","today_calls_duration_sec":"INTEGER NOT NULL DEFAULT 0","contacts_count":"INTEGER NOT NULL DEFAULT 0","location_granted":"INTEGER NOT NULL DEFAULT 0","usage_granted":"INTEGER NOT NULL DEFAULT 0","calls_granted":"INTEGER NOT NULL DEFAULT 0","contacts_granted":"INTEGER NOT NULL DEFAULT 0","apps_sync_enabled":"INTEGER NOT NULL DEFAULT 0","calls_contacts_sync_enabled":"INTEGER NOT NULL DEFAULT 0","summary_last_synced_at":"REAL"}
         device_phase1_columns={"sms_today_count":"INTEGER NOT NULL DEFAULT 0","sms_safety_status":"TEXT NOT NULL DEFAULT 'not_enabled'"}
         for column,definition in {**device_summary_columns,**device_phase1_columns}.items():
             if column not in device_columns:
@@ -281,6 +286,7 @@ def restore_backup_blob(blob:bytes,confirm_overwrite:bool=False):
             if table=="devices":
                 row.setdefault("sms_today_count",0)
                 row.setdefault("sms_safety_status","not_enabled")
+                row.setdefault("installed_apps_count",len(row.get("installed_apps") or []))
             if set(row)!=set(BACKUP_COLUMNS[table]):
                 raise HTTPException(400,"Backup columns do not match the supported schema.")
     with db() as c:
@@ -563,7 +569,7 @@ def update_api_privacy_consent(payload:DeviceConsentUpdate,uid:str=Depends(curre
         if not updated["battery"]:
             c.execute("UPDATE devices SET battery=NULL WHERE device_id=? AND uid=?",(payload.deviceId,uid))
         if not updated["summaries"]:
-            c.execute("UPDATE devices SET installed_apps='[]',screen_time_minutes=0,today_calls_count=0,today_calls_duration_sec=0,contacts_count=0,summary_last_synced_at=NULL WHERE device_id=? AND uid=?",(payload.deviceId,uid))
+            c.execute("UPDATE devices SET installed_apps='[]',installed_apps_count=0,screen_time_minutes=0,today_calls_count=0,today_calls_duration_sec=0,contacts_count=0,summary_last_synced_at=NULL WHERE device_id=? AND uid=?",(payload.deviceId,uid))
         if not updated["sms_summary"]:
             c.execute("UPDATE devices SET sms_today_count=0,sms_safety_status='not_enabled' WHERE device_id=? AND uid=?",(payload.deviceId,uid))
     return {"deviceId":payload.deviceId,**updated}
@@ -663,6 +669,11 @@ def register_device(payload:DeviceRegister,uid:str=Depends(current_uid)):
                 (payload.deviceId,uid,payload.deviceName.strip(),payload.platform.strip().lower(),now,now,payload.batteryPercent if consent.get("battery") else None))
     return {"registered":True,"deviceId":payload.deviceId,"lastSeen":now}
 
+@app.post("/api/device/apps")
+def update_device_apps(payload:DeviceAppsUpdate,uid:str=Depends(current_uid)):
+    summary=DeviceSummaryUpdate(**payload.dict(exclude={"deviceId"}))
+    return update_device_summary(payload.deviceId,summary,uid)
+
 @app.post("/api/devices/{device_id}/summary")
 @app.post("/devices/{device_id}/summary")
 def update_device_summary(device_id:str,payload:DeviceSummaryUpdate,uid:str=Depends(current_uid)):
@@ -682,11 +693,13 @@ def update_device_summary(device_id:str,payload:DeviceSummaryUpdate,uid:str=Depe
         if not consent.get("summaries"):
             raise HTTPException(403,"Device summary upload is disabled by this device's owner.")
         synced_at=time.time()
-        c.execute("""UPDATE devices SET installed_apps=?,screen_time_minutes=?,today_calls_count=?,
+        c.execute("""UPDATE devices SET installed_apps=?,installed_apps_count=?,screen_time_minutes=?,today_calls_count=?,
             today_calls_duration_sec=?,contacts_count=?,battery=COALESCE(?,battery),location_granted=?,usage_granted=?,
             calls_granted=?,contacts_granted=?,apps_sync_enabled=?,calls_contacts_sync_enabled=?,
             summary_last_synced_at=?,last_seen=? WHERE device_id=? AND uid=?""",
-            (json.dumps(list(dict.fromkeys(apps)),ensure_ascii=False),payload.screen_time_minutes,
+            (json.dumps(list(dict.fromkeys(apps)),ensure_ascii=False) if payload.apps_sync_enabled else "[]",
+             payload.installed_apps_count if payload.apps_sync_enabled else 0,
+             payload.screen_time_minutes if payload.apps_sync_enabled else 0,
              payload.today_calls_count,payload.today_calls_duration_sec,payload.contacts_count,payload.battery_percent if consent.get("battery") else None,
              int(payload.location_granted),int(payload.usage_granted),int(payload.calls_granted),int(payload.contacts_granted),
              int(payload.apps_sync_enabled),int(payload.calls_contacts_sync_enabled),synced_at,synced_at,device_id,uid))
@@ -722,7 +735,7 @@ def list_devices(familyId:Optional[str]=None,uid:str=Depends(current_uid)):
                 if not isinstance(app_labels,list): app_labels=[]
             except (TypeError,ValueError):
                 app_labels=[]
-            item.update({"installed_apps":app_labels,
+            item.update({"installed_apps":app_labels,"installed_apps_count":r["installed_apps_count"] or 0,
                 "screen_time_minutes":r["screen_time_minutes"] or 0,
                 "today_calls_count":r["today_calls_count"] or 0,
                 "today_calls_duration_sec":r["today_calls_duration_sec"] or 0,

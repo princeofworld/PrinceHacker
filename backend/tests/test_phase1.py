@@ -157,6 +157,49 @@ def test_location_history_is_owner_scoped_and_consent_gated(api):
     history=client.get(f"/api/devices/{device_id}/locations",headers=headers)
     assert history.status_code == 200 and history.json()["count"] == 2
     assert len(history.json()["locations"]) == 2
+    off=client.post("/api/privacy/consent",headers=headers,json={"deviceId":device_id,"location":False})
+    assert off.status_code == 200
+    blocked=client.post("/devices/location",headers=headers,json={
+        "familyId":family_id,"deviceId":device_id,"latitude":13.2,"longitude":80.0,
+        "capturedAt":datetime.now(timezone.utc).isoformat()
+    })
+    assert blocked.status_code == 403
+    assert client.get(f"/api/devices/{device_id}/locations",headers=headers).status_code == 403
+
+
+def test_installed_apps_count_and_list_sync_is_consent_gated(api):
+    _, client = api
+    _, _, headers = register(client)
+    device_id = _registered_device(client, headers)
+    endpoint = "/api/device/apps"
+    payload = {
+        "deviceId": device_id,
+        "installed_apps_count": 137,
+        "installed_apps": ["Maps (com.example.maps)", "Calendar (com.example.calendar)"],
+        "screen_time_minutes": 83,
+        "apps_sync_enabled": True,
+        "usage_granted": True,
+    }
+    assert client.post(endpoint, headers=headers, json=payload).status_code == 403
+    consent = client.post("/api/privacy/consent", headers=headers,
+                          json={"deviceId": device_id, "summaries": True})
+    assert consent.status_code == 200
+    saved = client.post(endpoint, headers=headers, json=payload)
+    assert saved.status_code == 200, saved.text
+    device = next(x for x in client.get("/devices", headers=headers).json()["devices"]
+                  if x["deviceId"] == device_id)
+    assert device["installed_apps_count"] == 137
+    assert device["installed_apps"] == payload["installed_apps"]
+    assert device["screen_time_minutes"] == 83
+    off = client.post("/api/privacy/consent", headers=headers,
+                      json={"deviceId": device_id, "summaries": False})
+    assert off.status_code == 200
+    assert client.post(endpoint, headers=headers, json=payload).status_code == 403
+    device = next(x for x in client.get("/devices", headers=headers).json()["devices"]
+                  if x["deviceId"] == device_id)
+    assert device["installed_apps_count"] == 0
+    assert device["installed_apps"] == []
+    assert device["screen_time_minutes"] == 0
 
 
 def test_sms_summary_requires_explicit_consent_and_stores_aggregates_only(api):
