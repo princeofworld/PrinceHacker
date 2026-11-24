@@ -152,6 +152,8 @@ class FamilyLocationService : Service(), LocationListener {
                 try {
                     FamilyGuardApi.post(this, "/family/consent",
                         JSONObject().put("familyId", familyId).put("shareLocation", false))
+                    val deviceId = prefs.getString("deviceId", null)
+                    if (!deviceId.isNullOrBlank()) FamilyGuardApi.updateDeviceConsent(this, deviceId, location = false)
                 } catch (_: Exception) {
                     // Local consent is revoked immediately; server-side stale points expire from API responses.
                 }
