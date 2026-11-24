@@ -26,6 +26,7 @@ class DeviceSummarySyncWorker(context: Context, params: WorkerParameters) : Work
         return try {
             // Fetch authoritative server consent before reading any telemetry.
             val remoteConsent = FamilyGuardApi.getDeviceConsent(applicationContext, deviceId)
+            // The server is authoritative. Apply revocation locally before touching usage/call data.
             if (!remoteConsent.optBoolean("summaries", false)) {
                 prefs.edit().putBoolean(KEY_APPS, false).putBoolean(KEY_CALLS, false).apply()
                 DeviceSummarySyncScheduler.cancel(applicationContext)

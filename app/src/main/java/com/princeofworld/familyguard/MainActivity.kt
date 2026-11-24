@@ -79,6 +79,7 @@ class MainActivity : ComponentActivity() {
     private var profileName by mutableStateOf("")
     private var profilePhone by mutableStateOf("")
     private var profileMessage by mutableStateOf("Loading profile…")
+    private var remoteConsentStatus by mutableStateOf("Server consent has not been refreshed yet.")
 
     private val locationPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
@@ -136,9 +137,8 @@ class MainActivity : ComponentActivity() {
             verificationExecutor.execute {
                 try {
                     FamilyGuardApi.registerThisDevice(this)
+                    syncRemoteDeviceConsentNow()
                     refreshProfile()
-                    if (installedAppsSync || callsContactsSync) DeviceSummarySyncScheduler.schedule(this)
-                    else DeviceSummarySyncScheduler.syncNow(this)
                 } catch (_: Exception) { }
             }
         }
@@ -181,10 +181,12 @@ class MainActivity : ComponentActivity() {
                     callsContactsSync = callsContactsSync,
                     onInstalledAppsSyncChanged = { updateInstalledAppsSync(it) },
                     onCallsContactsSyncChanged = { updateCallsContactsSync(it) },
-                    onSyncNow = { syncDeviceSummaryNow() },
+                    onSyncNow = { refreshDeviceConsent(manual = true) },
                     profileName = profileName,
                     profilePhone = profilePhone,
                     profileMessage = profileMessage,
+                    remoteConsentStatus = remoteConsentStatus,
+                    onRefreshConsent = { refreshDeviceConsent(manual = true) },
                     onSaveProfile = { name, phone -> saveProfile(name, phone) }
                 )
                 pendingDisclosure?.let { step ->
@@ -274,20 +276,12 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         if (signedIn && consentAccepted) refreshUsageReport()
-        if (signedIn && installedAppsSync && hasUsageAccess()) DeviceSummarySyncScheduler.schedule(this)
-        if (signedIn && callsContactsSync && hasCallAndContactsPermissions()) DeviceSummarySyncScheduler.schedule(this)
         if (signedIn) refreshSubscriptionStatus()
         if (signedIn) refreshFamilyContext()
         if (signedIn) refreshProfile()
         locationSharingActive = getSharedPreferences("familyguard_family", Context.MODE_PRIVATE)
             .getString("locationSessionStatus", "stopped") == "active"
-        if (signedIn) verificationExecutor.execute {
-            try {
-                FamilyGuardApi.registerThisDevice(this)
-                if (installedAppsSync || callsContactsSync) DeviceSummarySyncScheduler.schedule(this)
-                else DeviceSummarySyncScheduler.syncNow(this)
-            } catch (_: Exception) { }
-        }
+        if (signedIn) refreshDeviceConsent()
         updatePermissionStatus()
     }
 
@@ -304,6 +298,76 @@ class MainActivity : ComponentActivity() {
             } catch (e: Exception) {
                 runOnUiThread { familyStatus = e.message ?: "Family service request failed." }
             }
+        }
+    }
+
+    private fun refreshDeviceConsent(manual: Boolean = false) {
+        if (!signedIn) return
+        verificationExecutor.execute { syncRemoteDeviceConsentNow(manual) }
+    }
+
+    // Must run on verificationExecutor: fetch authoritative server flags before any
+    // local worker is scheduled. Missing/unreachable consent fails closed for sharing.
+    private fun syncRemoteDeviceConsentNow(manual: Boolean = false) {
+        try {
+            FamilyGuardApi.registerThisDevice(this)
+            val familyPrefs = getSharedPreferences("familyguard_family", Context.MODE_PRIVATE)
+            val deviceId = familyPrefs.getString("deviceId", null)
+                ?: throw IllegalStateException("Device registration is not ready.")
+            val remote = FamilyGuardApi.getDeviceConsent(this, deviceId)
+            val locationOn = remote.optBoolean("location", false)
+            val batteryOn = remote.optBoolean("battery", false)
+            val summariesOn = remote.optBoolean("summaries", false)
+            val summaryPrefs = getSharedPreferences(DeviceSummarySyncWorker.PREFS, Context.MODE_PRIVATE)
+
+            if (!summariesOn) {
+                summaryPrefs.edit()
+                    .putBoolean(DeviceSummarySyncWorker.KEY_APPS, false)
+                    .putBoolean(DeviceSummarySyncWorker.KEY_CALLS, false)
+                    .apply()
+                DeviceSummarySyncScheduler.cancel(this)
+            }
+            if (!locationOn) {
+                familyPrefs.edit()
+                    .putBoolean("locationConsent", false)
+                    .putString("locationSessionStatus", "stopped")
+                    .apply()
+                // Stop the foreground location service immediately when website consent is revoked.
+                stopService(Intent(this, FamilyLocationService::class.java))
+            }
+
+            val appsNow = summariesOn && summaryPrefs.getBoolean(DeviceSummarySyncWorker.KEY_APPS, false)
+            val callsNow = summariesOn && summaryPrefs.getBoolean(DeviceSummarySyncWorker.KEY_CALLS, false)
+            runOnUiThread {
+                installedAppsSync = appsNow
+                callsContactsSync = callsNow
+                locationSharingActive = locationOn &&
+                    familyPrefs.getString("locationSessionStatus", "stopped") == "active"
+                remoteConsentStatus = "Server consent — Location: " + (if (locationOn) "ON" else "OFF") +
+                    " · Battery: " + (if (batteryOn) "ON" else "OFF") +
+                    " · Device summaries: " + (if (summariesOn) "ON" else "OFF")
+                if (summariesOn && (appsNow || callsNow)) {
+                    if (manual) DeviceSummarySyncScheduler.syncNow(this)
+                    else DeviceSummarySyncScheduler.schedule(this)
+                }
+                if (manual) notice = "Latest device consent refreshed from your FamilyGuard account."
+            }
+        } catch (e: Exception) {
+            runOnUiThread {
+                remoteConsentStatus = "Could not refresh server consent. Background collection remains blocked until consent is verified."
+                if (manual) notice = e.message ?: "Consent refresh failed. No new background sync was started."
+            }
+            // Fail closed if consent cannot be verified: cancel pending summary work and stop location.
+            getSharedPreferences(DeviceSummarySyncWorker.PREFS, Context.MODE_PRIVATE).edit()
+                .putBoolean(DeviceSummarySyncWorker.KEY_APPS, false)
+                .putBoolean(DeviceSummarySyncWorker.KEY_CALLS, false)
+                .apply()
+            DeviceSummarySyncScheduler.cancel(this)
+            getSharedPreferences("familyguard_family", Context.MODE_PRIVATE).edit()
+                .putBoolean("locationConsent", false)
+                .putString("locationSessionStatus", "stopped")
+                .apply()
+            stopService(Intent(this, FamilyLocationService::class.java))
         }
     }
 
@@ -544,7 +608,8 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun stopFamilyLocationSharing() {
-        stopService(Intent(this, FamilyLocationService::class.java))
+        val stopIntent = Intent(this, FamilyLocationService::class.java).setAction(FamilyLocationService.ACTION_STOP)
+        try { startService(stopIntent) } catch (_: Exception) { stopService(Intent(this, FamilyLocationService::class.java)) }
         locationSharingActive = false
         getSharedPreferences("familyguard_family", MODE_PRIVATE).edit().putString("locationSessionStatus", "stopped").putBoolean("locationConsent", false).apply()
         runFamilyTask {
@@ -879,6 +944,8 @@ private fun FamilyGuardDashboard(
     profileName: String,
     profilePhone: String,
     profileMessage: String,
+    remoteConsentStatus: String,
+    onRefreshConsent: () -> Unit,
     onSaveProfile: (String, String) -> Unit
 ) {
     Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
@@ -925,7 +992,8 @@ private fun FamilyGuardDashboard(
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     Text("Device Summary Sync — Optional Consent", style = MaterialTheme.typography.titleLarge)
                     Text("Each category is independent and OFF by default. When ON, only app labels and total screen-time minutes, or today's total call count, total call duration and total contacts count are uploaded. No phone numbers, call details, contact names or contact contents are uploaded. Turning either switch OFF immediately cancels pending summary work for that category and blocks it at the API upload boundary. Android permissions can also be revoked in Settings.")
-                    Button(onClick = onSyncNow, modifier = Modifier.fillMaxWidth()) { Text("SYNC NOW") }
+                    Text(remoteConsentStatus, style = MaterialTheme.typography.bodySmall)
+                    Button(onClick = onRefreshConsent, modifier = Modifier.fillMaxWidth()) { Text("REFRESH SERVER CONSENT & SYNC") }
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                         Column(Modifier.weight(1f)) {
                             Text("Installed Apps & Screen Time Sync")

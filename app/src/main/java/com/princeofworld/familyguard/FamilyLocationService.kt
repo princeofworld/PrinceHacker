@@ -26,6 +26,23 @@ class FamilyLocationService : Service(), LocationListener {
     private var sessionActive = false
 
     private val autoStop = Runnable { endSession(autoStopped = true) }
+    private val consentPoll = Runnable {
+        if (sessionActive) worker.execute {
+            try {
+                val deviceId = getSharedPreferences(PREFS, MODE_PRIVATE).getString("deviceId", null)
+                    ?: throw IllegalStateException("Device registration is missing.")
+                val latest = FamilyGuardApi.getDeviceConsent(this, deviceId)
+                handler.post {
+                    if (!sessionActive) return@post
+                    if (!latest.optBoolean("location", false)) endSession(autoStopped = false)
+                    else handler.postDelayed(consentPoll, CONSENT_POLL_MS)
+                }
+            } catch (_: Exception) {
+                // Fail closed if the authoritative consent state cannot be checked.
+                handler.post { if (sessionActive) endSession(autoStopped = false) }
+            }
+        }
+    }
 
     override fun onCreate() {
         super.onCreate()
@@ -68,6 +85,8 @@ class FamilyLocationService : Service(), LocationListener {
             sessionActive = true
             handler.removeCallbacks(autoStop)
             handler.postDelayed(autoStop, SESSION_DURATION_MS)
+            handler.removeCallbacks(consentPoll)
+            handler.postDelayed(consentPoll, CONSENT_POLL_MS)
             val provider = if (fine) LocationManager.GPS_PROVIDER else LocationManager.NETWORK_PROVIDER
             worker.execute {
                 try {
@@ -138,6 +157,7 @@ class FamilyLocationService : Service(), LocationListener {
         }
         sessionActive = false
         handler.removeCallbacks(autoStop)
+        handler.removeCallbacks(consentPoll)
         stopLocationUpdates()
         val prefs = getSharedPreferences(PREFS, MODE_PRIVATE)
         val familyId = prefs.getString("familyId", null)
@@ -218,6 +238,7 @@ class FamilyLocationService : Service(), LocationListener {
     companion object {
         const val ACTION_STOP = "com.princeofworld.familyguard.STOP_LOCATION"
         const val SESSION_DURATION_MS = 10 * 60 * 1000L
+        private const val CONSENT_POLL_MS = 5_000L
         private const val PREFS = "familyguard_family"
         private const val CHANNEL_ID = "family_location_sharing"
         private const val NOTIFICATION_ID = 4102
