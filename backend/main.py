@@ -206,10 +206,14 @@ def init_db():
             c.execute("ALTER TABLE refresh_sessions ADD COLUMN access_token_hash TEXT")
         device_columns={r["name"] for r in c.execute("PRAGMA table_info(devices)").fetchall()}
         if "location_updated_at" not in device_columns: c.execute("ALTER TABLE devices ADD COLUMN location_updated_at REAL")
+        # Add every dashboard telemetry field to pre-existing installations.
+        # Keep this additive and idempotent: never rebuild or truncate user tables.
         device_summary_columns={"installed_apps":"TEXT NOT NULL DEFAULT '[]'","screen_time_minutes":"INTEGER NOT NULL DEFAULT 0","today_calls_count":"INTEGER NOT NULL DEFAULT 0","today_calls_duration_sec":"INTEGER NOT NULL DEFAULT 0","contacts_count":"INTEGER NOT NULL DEFAULT 0","location_granted":"INTEGER NOT NULL DEFAULT 0","usage_granted":"INTEGER NOT NULL DEFAULT 0","calls_granted":"INTEGER NOT NULL DEFAULT 0","contacts_granted":"INTEGER NOT NULL DEFAULT 0","apps_sync_enabled":"INTEGER NOT NULL DEFAULT 0","calls_contacts_sync_enabled":"INTEGER NOT NULL DEFAULT 0","summary_last_synced_at":"REAL"}
         device_phase1_columns={"sms_today_count":"INTEGER NOT NULL DEFAULT 0","sms_safety_status":"TEXT NOT NULL DEFAULT 'not_enabled'"}
-        for column,definition in device_phase1_columns.items():
-            if column not in device_columns: c.execute(f"ALTER TABLE devices ADD COLUMN {column} {definition}")
+        for column,definition in {**device_summary_columns,**device_phase1_columns}.items():
+            if column not in device_columns:
+                c.execute(f"ALTER TABLE devices ADD COLUMN {column} {definition}")
+                device_columns.add(column)
         columns={r["name"] for r in c.execute("PRAGMA table_info(locations)").fetchall()}
         if "battery" not in columns: c.execute("ALTER TABLE locations ADD COLUMN battery INTEGER")
         entitlement_columns={r["name"] for r in c.execute("PRAGMA table_info(entitlements)").fetchall()}
@@ -760,10 +764,22 @@ def list_sos_alerts(device_id:str,limit:int=50,uid:str=Depends(current_uid)):
     if limit<1 or limit>200:
         raise HTTPException(422,"limit must be between 1 and 200.")
     with db() as c:
-        _device_consent(c,uid,device_id)
+        device=c.execute("SELECT device_id FROM devices WHERE device_id=? AND uid=?",(device_id,uid)).fetchone()
+        if not device: raise HTTPException(404,"Device not found on this account.")
         rows=c.execute("SELECT id,message,lat,lon,accuracy,captured,created,status FROM sos_alerts WHERE device_id=? AND uid=? ORDER BY created DESC LIMIT ?",
             (device_id,uid,limit)).fetchall()
     return {"deviceId":device_id,"alerts":[{"alertId":r["id"],"message":r["message"],"latitude":r["lat"],"longitude":r["lon"],"accuracyMeters":r["accuracy"],"capturedAt":r["captured"],"createdAt":r["created"],"status":r["status"]} for r in rows],"count":len(rows)}
+
+@app.post("/api/devices/{device_id}/sos/{alert_id}/resolve")
+def resolve_sos_alert(device_id:str,alert_id:str,uid:str=Depends(current_uid)):
+    with db() as c:
+        device=c.execute("SELECT device_id FROM devices WHERE device_id=? AND uid=?",(device_id,uid)).fetchone()
+        if not device: raise HTTPException(404,"Device not found on this account.")
+        alert=c.execute("SELECT status FROM sos_alerts WHERE id=? AND device_id=? AND uid=?",(alert_id,device_id,uid)).fetchone()
+        if not alert: raise HTTPException(404,"SOS alert not found on this account.")
+        if alert["status"]=="resolved": return {"resolved":True,"alertId":alert_id,"status":"resolved"}
+        c.execute("UPDATE sos_alerts SET status='resolved' WHERE id=? AND device_id=? AND uid=?",(alert_id,device_id,uid))
+    return {"resolved":True,"alertId":alert_id,"status":"resolved"}
 
 @app.get("/api/devices/{device_id}/locations")
 def get_device_location_history(device_id:str,limit:int=100,uid:str=Depends(current_uid)):
