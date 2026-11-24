@@ -25,8 +25,27 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Wait for Render auto-deploy
-        run: sleep 45
+      - name: Wait for Render auto-deploy and public routes
+        shell: bash
+        run: |
+          BASE_URL="${LIVE_BASE_URL:-${RENDER_EXTERNAL_URL:-https://princehacker.onrender.com}}"
+          BASE_URL="${BASE_URL%/}"
+          echo "Waiting for Render deployment at ${BASE_URL}"
+          for attempt in $(seq 1 30); do
+            health_code=$(curl -sS -o /tmp/fg-health.json -w '%{http_code}' --max-time 15 "${BASE_URL}/health" || true)
+            login_code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 15 "${BASE_URL}/login" || true)
+            dashboard_code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 15 "${BASE_URL}/dashboard" || true)
+            admin_code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 15 "${BASE_URL}/admin" || true)
+            if [[ "${health_code}" == "200" && "${login_code}" == "200" && "${dashboard_code}" == "200" && "${admin_code}" == "200" ]]; then
+              echo "Render health and all friendly dashboard routes are ready."
+              cat /tmp/fg-health.json
+              exit 0
+            fi
+            echo "Attempt ${attempt}/30: health=${health_code}, login=${login_code}, dashboard=${dashboard_code}, admin=${admin_code}; waiting 20 seconds."
+            sleep 20
+          done
+          echo "Render did not finish deploying the expected public routes within 10 minutes."
+          exit 1
 
       - name: Set up Python
         uses: actions/setup-python@v5

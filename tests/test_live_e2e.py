@@ -118,6 +118,37 @@ def test_live_familyguard_end_to_end():
         ).json()
         assert enabled.get("location") is True and enabled.get("sms_summary") is True, enabled
 
+        # Exercise the installed-app / screen-time summary API with synthetic,
+        # non-personal CI data and verify it appears only on this test device.
+        synthetic_summary = {
+            "installed_apps": ["FamilyGuard E2E Synthetic App"],
+            "screen_time_minutes": 17,
+            "today_calls_count": 0,
+            "today_calls_duration_sec": 0,
+            "contacts_count": 0,
+            "location_granted": False,
+            "usage_granted": True,
+            "calls_granted": False,
+            "contacts_granted": False,
+            "apps_sync_enabled": True,
+            "calls_contacts_sync_enabled": False,
+        }
+        request(
+            "POST", f"/api/devices/{device_id}/summary",
+            token=token, expected={200}, json=synthetic_summary,
+        )
+        device_snapshot = request(
+            "GET", "/devices", token=token, expected={200}
+        ).json()
+        synthetic_device = next(
+            item for item in device_snapshot.get("devices", [])
+            if item.get("deviceId") == device_id
+        )
+        assert synthetic_device.get("installed_apps") == [
+            "FamilyGuard E2E Synthetic App"
+        ], synthetic_device
+        assert synthetic_device.get("screen_time_minutes") == 17, synthetic_device
+
         # Invalid bearer tokens must not create SOS alerts.
         now = datetime.now(timezone.utc).isoformat()
         sos_payload = {
@@ -193,6 +224,12 @@ def test_live_familyguard_end_to_end():
         )
         assert blocked_sms.status_code == 403
 
+        blocked_summary = request(
+            "POST", f"/api/devices/{device_id}/summary",
+            token=token, expected={403}, json=synthetic_summary,
+        )
+        assert blocked_summary.status_code == 403
+
         # Re-enable the synthetic device solely to read its now-empty history
         # and aggregate summary; consent OFF already purged these test-device
         # fields in the backend.
@@ -207,6 +244,15 @@ def test_live_familyguard_end_to_end():
             },
         ).json()
         assert restored.get("location") is True and restored.get("sms_summary") is True
+        cleared_snapshot = request(
+            "GET", "/devices", token=token, expected={200}
+        ).json()
+        cleared_device = next(
+            item for item in cleared_snapshot.get("devices", [])
+            if item.get("deviceId") == device_id
+        )
+        assert cleared_device.get("installed_apps") == [], cleared_device
+        assert cleared_device.get("screen_time_minutes") == 0, cleared_device
         history = request(
             "GET", f"/api/devices/{device_id}/locations",
             token=token, expected={200},
