@@ -69,8 +69,25 @@ class FamilyLocationService : Service(), LocationListener {
             handler.removeCallbacks(autoStop)
             handler.postDelayed(autoStop, SESSION_DURATION_MS)
             val provider = if (fine) LocationManager.GPS_PROVIDER else LocationManager.NETWORK_PROVIDER
-            manager?.requestLocationUpdates(provider, 30_000L, 0f, this)
-            manager?.getLastKnownLocation(provider)?.let { onLocationChanged(it) }
+            worker.execute {
+                try {
+                    val deviceId = getSharedPreferences(PREFS, MODE_PRIVATE).getString("deviceId", null)
+                        ?: throw IllegalStateException("Device registration is missing.")
+                    val consent = FamilyGuardApi.getDeviceConsent(this, deviceId)
+                    if (!consent.optBoolean("location", false)) {
+                        handler.post { endSession(autoStopped = false) }
+                    } else {
+                        handler.post {
+                            if (sessionActive) {
+                                manager?.requestLocationUpdates(provider, 30_000L, 0f, this)
+                                manager?.getLastKnownLocation(provider)?.let { onLocationChanged(it) }
+                            }
+                        }
+                    }
+                } catch (_: Exception) {
+                    handler.post { endSession(autoStopped = false) }
+                }
+            }
         } catch (_: SecurityException) {
             endSession(autoStopped = false)
             return START_NOT_STICKY
@@ -91,8 +108,16 @@ class FamilyLocationService : Service(), LocationListener {
         }
         worker.execute {
             try {
-                val battery = (getSystemService(Context.BATTERY_SERVICE) as BatteryManager)
-                    .getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY).takeIf { it in 0..100 }
+                val deviceId = prefs.getString("deviceId", null) ?: return@execute
+                val remoteConsent = FamilyGuardApi.getDeviceConsent(this, deviceId)
+                if (!remoteConsent.optBoolean("location", false)) {
+                    handler.post { endSession(autoStopped = false) }
+                    return@execute
+                }
+                val battery = if (remoteConsent.optBoolean("battery", false)) {
+                    (getSystemService(Context.BATTERY_SERVICE) as BatteryManager)
+                        .getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY).takeIf { it in 0..100 }
+                } else null
                 FamilyGuardApi.post(this, "/devices/location", JSONObject()
                     .put("latitude", location.latitude).put("longitude", location.longitude)
                     .put("accuracyMeters", location.accuracy.toDouble())
