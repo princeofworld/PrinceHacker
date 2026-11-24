@@ -540,6 +540,7 @@ def update_api_privacy_consent(payload:DeviceConsentUpdate,uid:str=Depends(curre
         _set_meta_json(c,"device_consent:"+uid+":"+payload.deviceId,updated)
         if not updated["location"]:
             c.execute("DELETE FROM locations WHERE uid=?",(uid,))
+            c.execute("DELETE FROM device_locations WHERE device_id=? AND uid=?",(payload.deviceId,uid))
             c.execute("UPDATE devices SET lat=NULL,lon=NULL,accuracy=NULL,captured=NULL,location_updated_at=NULL WHERE device_id=? AND uid=?",(payload.deviceId,uid))
         if not updated["battery"]:
             c.execute("UPDATE devices SET battery=NULL WHERE device_id=? AND uid=?",(payload.deviceId,uid))
