@@ -835,11 +835,47 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun sendSosAlert() {
-        val text = "SOS: I need help. This alert was prepared by the FamilyGuard user."
-        val intent = Intent(Intent.ACTION_SENDTO, Uri.parse("smsto:"))
-            .putExtra("sms_body", text)
-        if (intent.resolveActivity(packageManager) != null) startActivity(intent)
-        else notice = "No SMS app is available. SOS was not sent."
+        val fine = ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
+        val coarse = ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
+        if (!fine && !coarse) {
+            notice = "Grant location permission before sending an SOS location."
+            return
+        }
+        val prefs = getSharedPreferences("familyguard_family", MODE_PRIVATE)
+        val deviceId = prefs.getString("deviceId", null)
+        if (deviceId.isNullOrBlank()) {
+            notice = "Register this device and sign in before sending SOS."
+            return
+        }
+        notice = "Sending SOS alert…"
+        verificationExecutor.execute {
+            try {
+                val consent = FamilyGuardApi.getDeviceConsent(this, deviceId)
+                if (!consent.optBoolean("location", false)) {
+                    runOnUiThread { notice = "Enable location-sharing consent before sending SOS." }
+                    return@execute
+                }
+                val manager = getSystemService(Context.LOCATION_SERVICE) as LocationManager
+                val provider = if (fine) LocationManager.GPS_PROVIDER else LocationManager.NETWORK_PROVIDER
+                val location = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                    var result: Location? = null
+                    val latch = java.util.concurrent.CountDownLatch(1)
+                    manager.getCurrentLocation(provider, null, mainExecutor) { value ->
+                        result = value
+                        latch.countDown()
+                    }
+                    if (!latch.await(20, java.util.concurrent.TimeUnit.SECONDS)) null else result
+                } else {
+                    @Suppress("DEPRECATION")
+                    manager.getLastKnownLocation(provider)
+                }
+                if (location == null) throw IllegalStateException("A fresh GPS location is unavailable. Try again outdoors.")
+                FamilyGuardApi.sendSosAlert(this, deviceId, location)
+                runOnUiThread { notice = "SOS emergency alert sent to your FamilyGuard account." }
+            } catch (e: Exception) {
+                runOnUiThread { notice = "SOS was not sent: " + (e.message ?: "network or location error") }
+            }
+        }
     }
 }
 
