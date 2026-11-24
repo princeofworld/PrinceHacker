@@ -38,13 +38,22 @@ object FamilyGuardApi {
             prefs.edit().putString("deviceId", deviceId).apply()
         }
         val name = (android.os.Build.MANUFACTURER + " " + android.os.Build.MODEL).trim().take(100)
-        val battery = (context.getSystemService(Context.BATTERY_SERVICE) as android.os.BatteryManager)
-            .getIntProperty(android.os.BatteryManager.BATTERY_PROPERTY_CAPACITY).takeIf { it in 0..100 }
+        // Register identity first; do not read battery until the server confirms opt-in.
         post(context, "/devices/register", JSONObject()
             .put("deviceId", deviceId)
             .put("deviceName", if (name.isBlank()) "Android device" else name)
             .put("platform", "android")
-            .put("batteryPercent", battery ?: JSONObject.NULL))
+            .put("batteryPercent", JSONObject.NULL))
+        val consent = getDeviceConsent(context, deviceId)
+        if (consent.optBoolean("battery", false)) {
+            val battery = (context.getSystemService(Context.BATTERY_SERVICE) as android.os.BatteryManager)
+                .getIntProperty(android.os.BatteryManager.BATTERY_PROPERTY_CAPACITY).takeIf { it in 0..100 }
+            post(context, "/devices/register", JSONObject()
+                .put("deviceId", deviceId)
+                .put("deviceName", if (name.isBlank()) "Android device" else name)
+                .put("platform", "android")
+                .put("batteryPercent", battery ?: JSONObject.NULL))
+        }
     }
 
     fun postDeviceSummary(context: Context, deviceId: String, summary: JSONObject): JSONObject =
