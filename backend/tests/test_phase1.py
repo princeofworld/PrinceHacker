@@ -172,6 +172,11 @@ def test_sms_summary_requires_explicit_consent_and_stores_aggregates_only(api):
     assert consent.status_code == 200, consent.text
     saved=client.post(endpoint,headers=headers,json=payload)
     assert saved.status_code == 200, saved.text
+    # The endpoint accepts aggregate fields only; raw SMS/OTP fields are rejected.
+    raw_attempt=client.post(endpoint,headers=headers,json={
+        **payload,"message_body":"OTP 123456","sender":"+911234567890"
+    })
+    assert raw_attempt.status_code == 422
     loaded=client.get(endpoint,headers=headers)
     assert loaded.status_code == 200 and loaded.json()["sms_today_count"] == 6
     with main.db() as conn:
