@@ -26,20 +26,23 @@ class FamilyLocationService : Service(), LocationListener {
     private var sessionActive = false
 
     private val autoStop = Runnable { endSession(autoStopped = true) }
-    private val consentPoll = Runnable {
-        if (sessionActive) worker.execute {
-            try {
-                val deviceId = getSharedPreferences(PREFS, MODE_PRIVATE).getString("deviceId", null)
-                    ?: throw IllegalStateException("Device registration is missing.")
-                val latest = FamilyGuardApi.getDeviceConsent(this, deviceId)
-                handler.post {
-                    if (!sessionActive) return@post
-                    if (!latest.optBoolean("location", false)) endSession(autoStopped = false)
-                    else handler.postDelayed(consentPoll, CONSENT_POLL_MS)
+    private val consentPoll: Runnable = object : Runnable {
+        override fun run() {
+            if (!sessionActive) return
+            worker.execute {
+                try {
+                    val deviceId = getSharedPreferences(PREFS, MODE_PRIVATE).getString("deviceId", null)
+                        ?: throw IllegalStateException("Device registration is missing.")
+                    val latest = FamilyGuardApi.getDeviceConsent(this@FamilyLocationService, deviceId)
+                    handler.post {
+                        if (!sessionActive) return@post
+                        if (!latest.optBoolean("location", false)) endSession(autoStopped = false)
+                        else handler.postDelayed(consentPoll, CONSENT_POLL_MS)
+                    }
+                } catch (_: Exception) {
+                    // Fail closed if the authoritative consent state cannot be checked.
+                    handler.post { if (sessionActive) endSession(autoStopped = false) }
                 }
-            } catch (_: Exception) {
-                // Fail closed if the authoritative consent state cannot be checked.
-                handler.post { if (sessionActive) endSession(autoStopped = false) }
             }
         }
     }
