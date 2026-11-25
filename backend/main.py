@@ -1123,6 +1123,10 @@ def terms_document():
 
 
 # Friendly aliases used by the live deployment smoke tests and browser bookmarks.
+@app.get("/", include_in_schema=False)
+def home_page_alias():
+    return FileResponse(WEB_DIR / "index.html", media_type="text/html")
+
 @app.get("/login", include_in_schema=False)
 def login_page_alias():
     return FileResponse(WEB_DIR / "login.html", media_type="text/html")
@@ -1133,6 +1137,10 @@ def dashboard_page_alias():
 
 @app.get("/admin", include_in_schema=False)
 def admin_page_alias():
+    return FileResponse(WEB_DIR / "admin" / "index.html", media_type="text/html")
+
+@app.get("/admin/", include_in_schema=False)
+def admin_page_slash_alias():
     return FileResponse(WEB_DIR / "admin" / "index.html", media_type="text/html")
 
 

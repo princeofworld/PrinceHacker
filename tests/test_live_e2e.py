@@ -26,7 +26,7 @@ def request(method, path, *, token=None, expected=None, **kwargs):
         headers["Authorization"] = f"Bearer {token}"
     response = requests.request(
         method, urljoin(BASE_URL + "/", path.lstrip("/")),
-        headers=headers, timeout=TIMEOUT, **kwargs
+        headers=headers, timeout=TIMEOUT, allow_redirects=True, **kwargs
     )
     if expected is not None:
         assert response.status_code in expected, (
@@ -46,23 +46,29 @@ def test_live_familyguard_end_to_end():
     assert health.get("status") == "ok", health
     assert health.get("databaseConnected") is True, health
 
-    for path in ("/login", "/dashboard", "/admin"):
+    # Browser entry points must serve HTML on the deployed Render service.
+    for path in ("/", "/login", "/dashboard", "/admin"):
         page = request("GET", path, expected={200})
         assert "text/html" in page.headers.get("content-type", "").lower(), (
             f"{path} did not return HTML"
         )
 
-    # API pages are backed by the same files; verify their canonical URLs too.
+    # Canonical static files and the slash-form admin alias must also resolve.
     for path in ("/login.html", "/dashboard.html", "/admin/"):
         request("GET", path, expected={200})
 
     dashboard_html = request("GET", "/dashboard", expected={200}).text
-    for required_tab in (
-        "Overview", "Location History", "Installed Apps",
-        "SOS Alerts", "Family Management", "Premium",
-    ):
-        assert required_tab in dashboard_html, (
-            f"Dashboard is missing required tab: {required_tab}"
+    required_tabs = {
+        "overview": "Overview",
+        "location-history": "Location History",
+        "installed-apps": "Installed Apps",
+        "sos-alerts": "SOS Alerts",
+        "family-management": "Family Management",
+        "premium": "Premium",
+    }
+    for tab_id, tab_label in required_tabs.items():
+        assert f'data-tab="{tab_id}"' in dashboard_html and tab_label in dashboard_html, (
+            f"Dashboard is missing required tab: {tab_label} ({tab_id})"
         )
 
     password = os.getenv("LIVE_E2E_TEST_PASSWORD") or secrets.token_urlsafe(24)
