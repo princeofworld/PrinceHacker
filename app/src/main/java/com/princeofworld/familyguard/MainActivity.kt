@@ -288,12 +288,29 @@ class MainActivity : ComponentActivity() {
         super.onDestroy()
     }
 
+    private fun requireLoginAfterAuthFailure(error: Exception) {
+        if (!FamilyGuardApi.isSessionInvalid(error)) return
+        FamilyGuardApi.clearSession(this)
+        runOnUiThread {
+            signedIn = false
+            premium = false
+            billingReady = false
+            loginMessage = "Your session expired. Sign in again with your email and password."
+            profileMessage = "Please sign in again to manage your profile."
+            remoteConsentStatus = "Sign in again to verify server consent."
+            locationSharingActive = false
+        }
+        DeviceSummarySyncScheduler.cancel(this)
+        stopService(Intent(this, FamilyLocationService::class.java))
+    }
+
     private fun runFamilyTask(action: () -> String) {
         verificationExecutor.execute {
             try {
                 val message = action()
                 runOnUiThread { familyStatus = message }
             } catch (e: Exception) {
+                requireLoginAfterAuthFailure(e)
                 runOnUiThread { familyStatus = e.message ?: "Family service request failed." }
             }
         }
@@ -381,7 +398,10 @@ class MainActivity : ComponentActivity() {
                     profilePhone = profile.optString("phone", "")
                     profileMessage = "Profile loaded."
                 }
-            } catch (e: Exception) { runOnUiThread { profileMessage = e.message ?: "Profile could not be loaded." } }
+            } catch (e: Exception) {
+                requireLoginAfterAuthFailure(e)
+                runOnUiThread { profileMessage = e.message ?: "Profile could not be loaded." }
+            }
         }
     }
 
@@ -395,7 +415,10 @@ class MainActivity : ComponentActivity() {
                     profilePhone = profile.optString("phone", "")
                     profileMessage = "Profile saved to your FamilyGuard account."
                 }
-            } catch (e: Exception) { runOnUiThread { profileMessage = e.message ?: "Profile update failed." } }
+            } catch (e: Exception) {
+                requireLoginAfterAuthFailure(e)
+                runOnUiThread { profileMessage = e.message ?: "Profile update failed." }
+            }
         }
     }
 
