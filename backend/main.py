@@ -1182,7 +1182,8 @@ def admin_page_slash_alias():
 # Serve the installable browser dashboard from the same origin as the API.
 WEB_DIR = Path(__file__).resolve().parent.parent / "web"
 if WEB_DIR.is_dir():
-    
+    app.mount("/", StaticFiles(directory=str(WEB_DIR), html=True), name="familyguard-web")
+
 # Consent-first media, signaling, and remote notification APIs.
 @app.post("/api/media/upload")
 async def upload_media(request:Request, uid:str=Depends(current_uid)):
@@ -1293,4 +1294,3 @@ def acknowledge_remote_command(device_id:str,command_id:str,payload:dict,uid:str
         if cur.rowcount!=1: raise HTTPException(404,"Command is no longer active.")
     return {"acknowledged":True,"status":status}
 
-app.mount("/", StaticFiles(directory=str(WEB_DIR), html=True), name="familyguard-web")
