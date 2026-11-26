@@ -73,7 +73,7 @@ class MainActivity : ComponentActivity() {
     private var usageText by mutableStateOf("Usage report is available to Premium subscribers after enabling Usage Access.")
     private var premium by mutableStateOf(false)
     private var billingReady by mutableStateOf(false)
-    private var billingMessage by mutableStateOf("Sign in to check your FamilyGuard plan.")
+    private var billingMessage by mutableStateOf("Sign in to check your PrinceCircle plan.")
     private var premiumPriceLabel by mutableStateOf("₹999 / month")
     private val verificationExecutor = Executors.newSingleThreadExecutor()
     private var notice by mutableStateOf<String?>(null)
@@ -82,7 +82,7 @@ class MainActivity : ComponentActivity() {
     private var usageAccessGranted by mutableStateOf(false)
     private var permissionSetupComplete by mutableStateOf(false)
     private var showDeleteDataDialog by mutableStateOf(false)
-    private var familyStatus by mutableStateOf("Sign in to FamilyGuard to create or join a family.")
+    private var familyStatus by mutableStateOf("Sign in to PrinceCircle to create or join a family.")
     private var familyId by mutableStateOf("")
     private var inviteCode by mutableStateOf("")
     private var familyLocationsText by mutableStateOf("No family locations loaded.")
@@ -153,7 +153,7 @@ class MainActivity : ComponentActivity() {
         if (uri != null) verificationExecutor.execute {
             try {
                 FamilyGuardApi.uploadPhoto(this, uri)
-                runOnUiThread { notice = "Selected photo uploaded to your private FamilyGuard gallery." }
+                runOnUiThread { notice = "Selected photo uploaded to your private PrinceCircle gallery." }
             } catch (error: Exception) {
                 runOnUiThread { notice = "Photo upload failed: ${error.message}" }
             }
@@ -279,9 +279,9 @@ class MainActivity : ComponentActivity() {
 
                 pendingDisclosure?.let { step ->
                     val disclosure = when (step) {
-                        "location" -> "LOCATION SHARING DISCLOSURE: If you agree and grant Android foreground location permission, FamilyGuard collects your device's latitude/longitude, accuracy, capture time and optional battery percentage. When you separately opt in and start sharing, these details are sent over HTTPS to members of the family you joined. A persistent notification remains visible. Each session ends automatically after 10 minutes; sharing and consent are then switched off, and you must press Start again for another session. You can stop earlier or revoke permission at any time. FamilyGuard does not request background location permission."
-                        "notifications" -> "FamilyGuard requests permission for visible safety and account notices. You can deny this and continue using features that do not require notifications."
-                        "usage_restricted" -> "Android blocks Usage Access for some sideloaded apps until the device user allows restricted settings. FamilyGuard cannot switch this on. On the next screen, open the three-dot menu and choose Allow restricted settings. Android may ask you to confirm your device lock. Return to FamilyGuard and tap One-Click Permission Setup again; then enable FamilyGuard in Usage Access. If Android does not offer this option, do not bypass the device's security controls."
+                        "location" -> "LOCATION SHARING DISCLOSURE: If you agree and grant Android foreground location permission, PrinceCircle collects your device's latitude/longitude, accuracy, capture time and optional battery percentage. When you separately opt in and start sharing, these details are sent over HTTPS to members of the family you joined. A persistent notification remains visible. Each session ends automatically after 10 minutes; sharing and consent are then switched off, and you must press Start again for another session. You can stop earlier or revoke permission at any time. PrinceCircle does not request background location permission."
+                        "notifications" -> "PrinceCircle requests permission for visible safety and account notices. You can deny this and continue using features that do not require notifications."
+                        "usage_restricted" -> "Android blocks Usage Access for some sideloaded apps until the device user allows restricted settings. PrinceCircle cannot switch this on. On the next screen, open the three-dot menu and choose Allow restricted settings. Android may ask you to confirm your device lock. Return to PrinceCircle and tap One-Click Permission Setup again; then enable PrinceCircle in Usage Access. If Android does not offer this option, do not bypass the device's security controls."
                         else -> "This optional Premium report reads app usage on this device. Android will open Usage Access settings so you can explicitly enable or decline it."
                     }
                     AlertDialog(
@@ -305,7 +305,7 @@ class MainActivity : ComponentActivity() {
                                                 )
                                             )
                                         } catch (_: Exception) {
-                                            notice = "Could not open App Info. Open Android Settings > Apps > FamilyGuard manually, then review the three-dot menu."
+                                            notice = "Could not open App Info. Open Android Settings > Apps > PrinceCircle manually, then review the three-dot menu."
                                         }
                                     }
                                     "usage" -> if (premium) usageSettingsLauncher.launch(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS))
@@ -319,7 +319,7 @@ class MainActivity : ComponentActivity() {
                 if (showDeleteDataDialog) {
                     AlertDialog(
                         onDismissRequest = { showDeleteDataDialog = false },
-                        title = { Text("Delete FamilyGuard account?") },
+                        title = { Text("Delete PrinceCircle account?") },
                         text = { Text("This permanently deletes your account, device registrations, payment-review records and family membership. Any family you own will be transferred to a remaining member or deleted if empty. This cannot be undone. Direct UPI payments do not create recurring mandates.") },
                         confirmButton = {
                             TextButton(onClick = {
@@ -338,7 +338,7 @@ class MainActivity : ComponentActivity() {
                                             consentAccepted = false
                                             familyConsentEnabled = false
                                             showDeleteDataDialog = false
-                                            notice = "Your FamilyGuard account and associated server data were deleted."
+                                            notice = "Your PrinceCircle account and associated server data were deleted."
                                         }
                                     } catch (e: Exception) {
                                         runOnUiThread { notice = e.message ?: "Account deletion failed. Please try again." }
@@ -381,7 +381,7 @@ class MainActivity : ComponentActivity() {
                     val commandId = command.optString("commandId")
                     val kind = command.optString("kind")
                     val payload = command.optJSONObject("payload") ?: JSONObject()
-                    val message = payload.optString("message", "FamilyGuard alert").take(180)
+                    val message = payload.optString("message", "PrinceCircle alert").take(180)
                     when (kind) {
                         "alert", "ring" -> {
                             if (showRemoteSafetyNotification(commandId, kind, message)) {
@@ -542,7 +542,7 @@ class MainActivity : ComponentActivity() {
                     if (manual) DeviceSummarySyncScheduler.syncNow(this)
                     else DeviceSummarySyncScheduler.schedule(this)
                 }
-                if (manual) notice = "Latest device consent refreshed from your FamilyGuard account."
+                if (manual) notice = "Latest device consent refreshed from your PrinceCircle account."
             }
         } catch (e: Exception) {
             runOnUiThread {
@@ -590,7 +590,7 @@ class MainActivity : ComponentActivity() {
                 runOnUiThread {
                     profileName = profile.optString("name", "")
                     profilePhone = profile.optString("phone", "")
-                    profileMessage = "Profile saved to your FamilyGuard account."
+                    profileMessage = "Profile saved to your PrinceCircle account."
                 }
             } catch (e: Exception) {
                 requireLoginAfterAuthFailure(e)
@@ -781,7 +781,7 @@ class MainActivity : ComponentActivity() {
 
     private fun startFamilyLocationSharing() {
         if (!familyConsentEnabled) {
-            notice = "Location sharing is not enabled by your family consent settings. Enable consent on the FamilyGuard website first."
+            notice = "Location sharing is not enabled by your family consent settings. Enable consent on the PrinceCircle website first."
             return
         }
         if (!hasLocationPermission()) {
@@ -795,7 +795,7 @@ class MainActivity : ComponentActivity() {
         }
         if (familyId.isBlank()) { notice = "Sign in and create or join a family first."; return }
         if (BuildConfig.FAMILYGUARD_API_BASE_URL.isBlank()) {
-            notice = "FamilyGuard service URL is not configured. Please try again after the service is available."
+            notice = "PrinceCircle service URL is not configured. Please try again after the service is available."
             return
         }
         runFamilyTask {
@@ -909,7 +909,7 @@ class MainActivity : ComponentActivity() {
             hasUsageAccess() -> "Granted"
             !premium -> "Premium only"
             Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && !restrictedHelpShown -> "Action needed: review Android Restricted Settings"
-            else -> "Pending: enable FamilyGuard in Usage Access settings"
+            else -> "Pending: enable PrinceCircle in Usage Access settings"
         }
         usageAccessGranted = hasUsageAccess()
         permissionSetupComplete = hasLocationPermission() && hasNotificationPermission() && (!premium || hasUsageAccess())
@@ -965,10 +965,10 @@ class MainActivity : ComponentActivity() {
                 val apkUrl = versionData.optString("apkUrl", "")
                 runOnUiThread {
                     if (latestCode > currentCode && apkUrl.startsWith("https://")) {
-                        notice = "FamilyGuard update " + versionData.optString("versionName") + " is available. The official APK will open in your browser. Review Android's installer prompt before updating."
+                        notice = "PrinceCircle update " + versionData.optString("versionName") + " is available. The official APK will open in your browser. Review Android's installer prompt before updating."
                         openWebPage(apkUrl)
                     } else {
-                        notice = "FamilyGuard is up to date. Current version: " + packageManager.getPackageInfo(packageName, 0).versionName + "."
+                        notice = "PrinceCircle is up to date. Current version: " + packageManager.getPackageInfo(packageName, 0).versionName + "."
                     }
                 }
             } catch (e: Exception) {
@@ -992,7 +992,7 @@ class MainActivity : ComponentActivity() {
 
     private fun openUsageAccessSettings() {
         if (!premium) {
-            notice = "App Usage & Screen Time reports are a Premium feature. Subscribe through the official FamilyGuard website first."
+            notice = "App Usage & Screen Time reports are a Premium feature. Subscribe through the official PrinceCircle website first."
             return
         }
         val restrictedHelpShown = getSharedPreferences("familyguard_permissions", Context.MODE_PRIVATE)
@@ -1014,7 +1014,7 @@ class MainActivity : ComponentActivity() {
             return
         }
         if (!hasUsageAccess()) {
-            usageText = "Usage Access is not enabled. Open Usage Access settings and explicitly allow FamilyGuard."
+            usageText = "Usage Access is not enabled. Open Usage Access settings and explicitly allow PrinceCircle."
             return
         }
         try {
@@ -1106,7 +1106,7 @@ class MainActivity : ComponentActivity() {
                 }
                 if (location == null) throw IllegalStateException("A fresh GPS location is unavailable. Try again outdoors.")
                 FamilyGuardApi.sendSosAlert(this, deviceId, location)
-                runOnUiThread { notice = "SOS emergency alert sent to your FamilyGuard account." }
+                runOnUiThread { notice = "SOS emergency alert sent to your PrinceCircle account." }
             } catch (e: Exception) {
                 runOnUiThread { notice = "SOS was not sent: " + (e.message ?: "network or location error") }
             }
@@ -1128,17 +1128,17 @@ private fun ParentalConsentDisclosureScreen(
         ) {
             Text("PrinceCircle — Important privacy notice", style = MaterialTheme.typography.headlineMedium)
             Text(
-                "A parent or legal guardian must review and accept this notice before FamilyGuard can request location permission or open Usage Access settings.",
+                "A parent or legal guardian must review and accept this notice before PrinceCircle can request location permission or open Usage Access settings.",
                 style = MaterialTheme.typography.bodyLarge
             )
             Text("Location", style = MaterialTheme.typography.titleMedium)
-            Text("LOCATION SHARING: If you grant foreground location permission and then separately opt in and start a session, FamilyGuard collects latitude/longitude, accuracy, capture time and optional battery percentage and sends them over HTTPS to members of the family you joined. A persistent notification remains visible. Updates may be requested approximately every 60 seconds. Each session automatically stops after 10 minutes, revokes local sharing consent and requires you to press Start again. You can stop earlier or revoke permission at any time. ACCESS_BACKGROUND_LOCATION is not requested.")
+            Text("LOCATION SHARING: If you grant foreground location permission and then separately opt in and start a session, PrinceCircle collects latitude/longitude, accuracy, capture time and optional battery percentage and sends them over HTTPS to members of the family you joined. A persistent notification remains visible. Updates may be requested approximately every 60 seconds. Each session automatically stops after 10 minutes, revokes local sharing consent and requires you to press Start again. You can stop earlier or revoke permission at any time. ACCESS_BACKGROUND_LOCATION is not requested.")
             Text("App usage", style = MaterialTheme.typography.titleMedium)
             Text("APP USAGE: The optional report requires Usage Access separately in Android Settings. The separate Installed Apps & Screen Time Sync switch uploads launchable app labels and today's total screen-time minutes only while ON.")
             Text("Calls and contacts summary", style = MaterialTheme.typography.titleMedium)
-            Text("CALLS & CONTACTS: A separate switch and Android runtime permission are required. While ON, FamilyGuard reads call dates and durations only to calculate today's total call count and total duration, and reads only the total contacts count. Phone numbers, call details, contact names and contact contents are never uploaded. Turning the switch OFF immediately stops future scheduled sync and clears the stored summary when the network is available.")
+            Text("CALLS & CONTACTS: A separate switch and Android runtime permission are required. While ON, PrinceCircle reads call dates and durations only to calculate today's total call count and total duration, and reads only the total contacts count. Phone numbers, call details, contact names and contact contents are never uploaded. Turning the switch OFF immediately stops future scheduled sync and clears the stored summary when the network is available.")
             Text("Data, sharing and safety", style = MaterialTheme.typography.titleMedium)
-            Text("Location sharing is optional. When the device user explicitly enables it, the app sends location to the FamilyGuard server over HTTPS and shows an ongoing Android notification. The user can stop sharing and revoke consent at any time. Never use this app for covert monitoring.")
+            Text("Location sharing is optional. When the device user explicitly enables it, the app sends location to the PrinceCircle server over HTTPS and shows an ongoing Android notification. The user can stop sharing and revoke consent at any time. Never use this app for covert monitoring.")
             Text("Parental consent", style = MaterialTheme.typography.titleMedium)
             Text("A parent or legal guardian should accept only after explaining the features to the device user and obtaining any consent required by local law. This on-device confirmation is not identity or age verification.")
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -1352,7 +1352,7 @@ private fun FamilyGuardDashboard(
                         Text(if (locationSharingActive) "LIVE SHARING ON" else "LIVE SHARING OFF", style = MaterialTheme.typography.titleMedium)
                         Text(
                             when {
-                                !familyConsentEnabled -> "Family location consent is OFF. Enable it from your FamilyGuard family settings before starting."
+                                !familyConsentEnabled -> "Family location consent is OFF. Enable it from your PrinceCircle family settings before starting."
                                 locationSharingActive -> "Your location is being shared with your family. A persistent Android notification stays visible. Each session automatically ends after 10 minutes."
                                 else -> "Family consent is enabled. Turn on the switch to start a visible live-sharing session."
                             },
@@ -1408,7 +1408,7 @@ private fun FamilyGuardDashboard(
                         }
                     }
                 }
-                Text("FamilyGuard location sharing is visible, consent-based and revocable. SOS and account settings are available from the menu.", style = MaterialTheme.typography.bodySmall)
+                Text("PrinceCircle location sharing is visible, consent-based and revocable. SOS and account settings are available from the menu.", style = MaterialTheme.typography.bodySmall)
             }
         }
     }

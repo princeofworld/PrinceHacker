@@ -1,4 +1,4 @@
-name: FamilyGuard APK Build
+name: PrinceCircle APK Build
 
 on:
   push:
@@ -9,12 +9,12 @@ permissions:
   contents: write
 
 concurrency:
-  group: familyguard-apk-build
+  group: princecircle-apk-build
   cancel-in-progress: true
 
 jobs:
   build-apk:
-    name: Build and verify FamilyGuard APK
+    name: Build and verify PrinceCircle APK
     runs-on: ubuntu-latest
     timeout-minutes: 40
     services:
@@ -91,13 +91,13 @@ jobs:
             echo "ANDROID_KEYSTORE_PATH=$KEYSTORE_PATH" >> "$GITHUB_ENV"
             echo "build_type=release" >> "$GITHUB_OUTPUT"
             echo "apk_path=app/build/outputs/apk/release/app-release.apk" >> "$GITHUB_OUTPUT"
-            echo "artifact_name=FamilyGuard-release-signed.apk" >> "$GITHUB_OUTPUT"
+            echo "artifact_name=PrinceCircle-release-signed.apk" >> "$GITHUB_OUTPUT"
             echo "signed=true" >> "$GITHUB_OUTPUT"
           else
             echo "Signing secrets are not all configured; building a debug APK fallback. It is not a Play Store release."
             echo "build_type=debug" >> "$GITHUB_OUTPUT"
             echo "apk_path=app/build/outputs/apk/debug/app-debug.apk" >> "$GITHUB_OUTPUT"
-            echo "artifact_name=FamilyGuard-debug-unsigned.apk" >> "$GITHUB_OUTPUT"
+            echo "artifact_name=PrinceCircle-debug-unsigned.apk" >> "$GITHUB_OUTPUT"
             echo "signed=false" >> "$GITHUB_OUTPUT"
           fi
 
@@ -135,7 +135,7 @@ jobs:
       - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
-          name: FamilyGuard-APK
+          name: PrinceCircle-APK
           path: release-artifacts/*
           if-no-files-found: error
           retention-days: 30
@@ -146,7 +146,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          TAG="familyguard-v1.3.3-build-$GITHUB_RUN_NUMBER"
-          gh release create "$TAG" release-artifacts/FamilyGuard-release-signed.apk \
-            --title "FamilyGuard 1.3.3 - Build #$GITHUB_RUN_NUMBER" \
-            --notes "Official signed FamilyGuard APK. APK signature was verified by apksigner in GitHub Actions."
+          TAG="princecircle-v1.3.3-build-$GITHUB_RUN_NUMBER"
+          gh release create "$TAG" release-artifacts/PrinceCircle-release-signed.apk \
+            --title "PrinceCircle 1.3.3 - Build #$GITHUB_RUN_NUMBER" \
+            --notes "Official signed PrinceCircle APK. APK signature was verified by apksigner in GitHub Actions."

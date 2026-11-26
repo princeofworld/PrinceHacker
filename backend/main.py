@@ -59,7 +59,7 @@ if not os.getenv("RENDER_DISK_PATH") and not Path("/var/data").exists():
 if DB_KIND=="sqlite":
     Path(DB_PATH).parent.mkdir(parents=True,exist_ok=True)
 WEB_DIR = Path(__file__).resolve().parent.parent / "web"
-app=FastAPI(title="FamilyGuard API",version="3.0.0")
+app=FastAPI(title="PrinceCircle API",version="3.0.0")
 
 class RefreshIn(BaseModel):
     refreshToken: str=Field(min_length=20,max_length=256)
@@ -421,7 +421,7 @@ def health():
             warnings.append("SQLite is using a local path; verify a persistent disk is mounted or configure PostgreSQL.")
         if not backup_encryption_configured():
             warnings.append("Encrypted admin backups are disabled until a valid 64-character BACKUP_ENCRYPTION_KEY is configured.")
-        return {"status":"ok","service":"familyguard-api","auth":"database-jwt","storage":DB_KIND,"databaseConnected":True,"deviceTableReady":table_ready,"locationSharing":"consent-gated","encryptedBackupsConfigured":backup_encryption_configured(),"backupMode":"manual-admin-download","razorpayEnabled":razorpay_configured(),"productionWarnings":warnings}
+        return {"status":"ok","service":"princecircle-api","auth":"database-jwt","storage":DB_KIND,"databaseConnected":True,"deviceTableReady":table_ready,"locationSharing":"consent-gated","encryptedBackupsConfigured":backup_encryption_configured(),"backupMode":"manual-admin-download","razorpayEnabled":razorpay_configured(),"razorpayWebhookConfigured":razorpay_configured() and bool(os.getenv("RAZORPAY_WEBHOOK_SECRET","").strip()),"productionWarnings":warnings}
     except Exception:
         raise HTTPException(503,"Database connection or required schema is unavailable.")
 def issue_auth_session(uid:str):
@@ -1131,7 +1131,7 @@ def admin_download_backup(_:str=Depends(require_admin)):
 
 @app.get("/app/latest-version")
 def latest_app_version():
-    return {"versionName":os.getenv("APP_VERSION_NAME","1.3.1"),"versionCode":int(os.getenv("APP_VERSION_CODE","6")),"minimumVersionCode":int(os.getenv("APP_MINIMUM_VERSION_CODE","5")),"apkUrl":os.getenv("APP_APK_URL","https://github.com/princeofworld/PrinceHacker/releases/latest/download/FamilyGuard-release-signed.apk"),"releaseNotes":"Official FamilyGuard update. Review the changes before installing.","forceUpdate":False}
+    return {"versionName":os.getenv("APP_VERSION_NAME","1.3.1"),"versionCode":int(os.getenv("APP_VERSION_CODE","6")),"minimumVersionCode":int(os.getenv("APP_MINIMUM_VERSION_CODE","5")),"apkUrl":os.getenv("APP_APK_URL","https://github.com/princeofworld/PrinceHacker/releases/latest/download/PrinceCircle-release-signed.apk"),"releaseNotes":"Official FamilyGuard update. Review the changes before installing.","forceUpdate":False}
 
 @app.delete("/account-data")
 def delete_account_data(uid:str=Depends(current_uid)):
