@@ -233,7 +233,6 @@ class MainActivity : ComponentActivity() {
                     familyConsentEnabled = familyConsentEnabled,
                     onSetupPermissions = { beginPermissionSetup() },
                     onUsage = { openUsageAccessSettings() },
-                    onSos = { sendSosAlert() },
                     onOpenWebsite = { openWebPage("https://princehacker.onrender.com/") },
                     onLogout = { logout() },
                     onPrivacy = { openWebPage("https://raw.githubusercontent.com/princeofworld/PrinceHacker/main/PRIVACY_POLICY.md") },
@@ -1069,49 +1068,7 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun sendSosAlert() {
-        val fine = ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
-        val coarse = ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
-        if (!fine && !coarse) {
-            notice = "Grant location permission before sending an SOS location."
-            return
-        }
-        val prefs = getSharedPreferences("familyguard_family", MODE_PRIVATE)
-        val deviceId = prefs.getString("deviceId", null)
-        if (deviceId.isNullOrBlank()) {
-            notice = "Register this device and sign in before sending SOS."
-            return
-        }
-        notice = "Sending SOS alert…"
-        verificationExecutor.execute {
-            try {
-                val consent = FamilyGuardApi.getDeviceConsent(this, deviceId)
-                if (!consent.optBoolean("location", false)) {
-                    runOnUiThread { notice = "Enable location-sharing consent before sending SOS." }
-                    return@execute
-                }
-                val manager = getSystemService(Context.LOCATION_SERVICE) as LocationManager
-                val provider = if (fine) LocationManager.GPS_PROVIDER else LocationManager.NETWORK_PROVIDER
-                val location = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                    var result: Location? = null
-                    val latch = java.util.concurrent.CountDownLatch(1)
-                    manager.getCurrentLocation(provider, null, mainExecutor) { value ->
-                        result = value
-                        latch.countDown()
-                    }
-                    if (!latch.await(20, java.util.concurrent.TimeUnit.SECONDS)) null else result
-                } else {
-                    @Suppress("DEPRECATION")
-                    manager.getLastKnownLocation(provider)
-                }
-                if (location == null) throw IllegalStateException("A fresh GPS location is unavailable. Try again outdoors.")
-                FamilyGuardApi.sendSosAlert(this, deviceId, location)
-                runOnUiThread { notice = "SOS emergency alert sent to your PrinceCircle account." }
-            } catch (e: Exception) {
-                runOnUiThread { notice = "SOS was not sent: " + (e.message ?: "network or location error") }
-            }
-        }
-    }
+
 }
 
 
@@ -1208,7 +1165,6 @@ private fun FamilyGuardDashboard(
     familyConsentEnabled: Boolean,
     onSetupPermissions: () -> Unit,
     onUsage: () -> Unit,
-    onSos: () -> Unit,
     onOpenWebsite: () -> Unit,
     onLogout: () -> Unit,
     onPrivacy: () -> Unit,
@@ -1278,7 +1234,6 @@ private fun FamilyGuardDashboard(
                     Text("PrinceCircle", style = MaterialTheme.typography.headlineLarge)
                     TextButton(onClick = { scope.launch { drawerState.open() } }) { Text("☰ Menu") }
                 }
-                Text("Your family tools", style = MaterialTheme.typography.titleMedium)
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     Card(modifier = Modifier.weight(1f)) {
                         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
