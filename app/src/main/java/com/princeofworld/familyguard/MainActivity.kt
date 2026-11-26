@@ -16,6 +16,7 @@ import androidx.work.WorkManager
 import androidx.core.content.ContextCompat
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -212,7 +213,7 @@ class MainActivity : ComponentActivity() {
                     remoteConsentStatus = remoteConsentStatus,
                     onRefreshConsent = { refreshDeviceConsent(manual = true) },
                     onSaveProfile = { name, phone -> saveProfile(name, phone) },
-                    onPickPhoto = { photoPickerLauncher.launch(ActivityResultContracts.PickVisualMedia.ImageOnly) }
+                    onPickPhoto = { photoPickerLauncher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }
                 )
                 pendingDisclosure?.let { step ->
                     val disclosure = when (step) {
