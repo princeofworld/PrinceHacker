@@ -33,6 +33,7 @@ else:
 
 INVITE_TTL_MINUTES=max(5,min(60,int(os.getenv("INVITE_TTL_MINUTES","15"))))
 MAX_BODY_BYTES=16384
+MAX_MEDIA_UPLOAD_BYTES=5*1024*1024
 BACKUP_MAGIC=b"FGBACKUP1"
 BACKUP_FORMAT_VERSION=1
 BACKUP_TABLES=("users","refresh_sessions","rate_limits","families","members","invites","locations","devices","device_locations","sos_alerts","entitlements","app_meta","payment_subscriptions","utr_payments")
@@ -205,6 +206,12 @@ def init_db():
         CREATE INDEX IF NOT EXISTS idx_device_locations_device_captured ON device_locations(device_id,captured DESC);
         CREATE TABLE IF NOT EXISTS sos_alerts(id TEXT PRIMARY KEY,device_id TEXT NOT NULL,uid TEXT NOT NULL,message TEXT NOT NULL,lat REAL NOT NULL,lon REAL NOT NULL,accuracy REAL,captured REAL NOT NULL,created REAL NOT NULL,status TEXT NOT NULL DEFAULT 'active',FOREIGN KEY(device_id) REFERENCES devices(device_id) ON DELETE CASCADE,FOREIGN KEY(uid) REFERENCES users(uid) ON DELETE CASCADE);
         CREATE INDEX IF NOT EXISTS idx_sos_alerts_uid_created ON sos_alerts(uid,created DESC);
+        CREATE TABLE IF NOT EXISTS media_files(id TEXT PRIMARY KEY,uid TEXT NOT NULL,device_id TEXT,mime_type TEXT NOT NULL,filename TEXT NOT NULL,data BYTEA NOT NULL,size_bytes INTEGER NOT NULL,created REAL NOT NULL);
+        CREATE INDEX IF NOT EXISTS idx_media_files_uid_created ON media_files(uid,created DESC);
+        CREATE TABLE IF NOT EXISTS webrtc_sessions(id TEXT PRIMARY KEY,uid TEXT NOT NULL,device_id TEXT NOT NULL,expires REAL NOT NULL,created REAL NOT NULL,status TEXT NOT NULL DEFAULT 'active');
+        CREATE TABLE IF NOT EXISTS webrtc_signals(id TEXT PRIMARY KEY,session_id TEXT NOT NULL,uid TEXT NOT NULL,kind TEXT NOT NULL,payload TEXT NOT NULL,created REAL NOT NULL);
+        CREATE INDEX IF NOT EXISTS idx_webrtc_signals_session ON webrtc_signals(session_id,created);
+        CREATE TABLE IF NOT EXISTS remote_commands(id TEXT PRIMARY KEY,uid TEXT NOT NULL,device_id TEXT NOT NULL,kind TEXT NOT NULL,payload TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'pending',created REAL NOT NULL,expires REAL NOT NULL,accepted_at REAL);
         """)
         refresh_columns={r["name"] for r in c.execute("PRAGMA table_info(refresh_sessions)").fetchall()}
         if "access_token_hash" not in refresh_columns:
@@ -386,7 +393,11 @@ class _NullContext:
 @app.middleware("http")
 async def size_limit(request:Request,call_next):
     length=request.headers.get("content-length")
-    if length and int(length)>MAX_BODY_BYTES: return JSONResponse(status_code=413,content={"detail":"Request too large"})
+    limit=MAX_MEDIA_UPLOAD_BYTES if request.url.path=="/api/media/upload" and request.method=="POST" else MAX_BODY_BYTES
+    if length:
+        try: declared=int(length)
+        except ValueError: return JSONResponse(status_code=400,content={"detail":"Invalid Content-Length"})
+        if declared>limit: return JSONResponse(status_code=413,content={"detail":"Request too large"})
     return await call_next(request)
 @app.get("/health")
 def health():
@@ -1171,4 +1182,115 @@ def admin_page_slash_alias():
 # Serve the installable browser dashboard from the same origin as the API.
 WEB_DIR = Path(__file__).resolve().parent.parent / "web"
 if WEB_DIR.is_dir():
-    app.mount("/", StaticFiles(directory=str(WEB_DIR), html=True), name="familyguard-web")
+    
+# Consent-first media, signaling, and remote notification APIs.
+@app.post("/api/media/upload")
+async def upload_media(request:Request, uid:str=Depends(current_uid)):
+    mime=(request.headers.get("content-type") or "").split(";")[0].lower()
+    if mime not in {"image/jpeg","image/png","image/webp"}: raise HTTPException(415,"Only JPEG, PNG, and WebP photos are supported.")
+    raw=await request.body()
+    if not raw or len(raw)>MAX_MEDIA_UPLOAD_BYTES: raise HTTPException(413,"Photo must be between 1 byte and 5 MB.")
+    device_id=request.headers.get("x-familyguard-device","")[:80] or None
+    filename=(request.headers.get("x-file-name","photo") or "photo").replace("\\","_").replace("/","_")[:120]
+    media_id=secrets.token_urlsafe(18); now=time.time()
+    with db() as c:
+        if device_id and not c.execute("SELECT 1 FROM devices WHERE device_id=? AND uid=?",(device_id,uid)).fetchone(): raise HTTPException(404,"Device not found.")
+        c.execute("INSERT INTO media_files(id,uid,device_id,mime_type,filename,data,size_bytes,created) VALUES(?,?,?,?,?,?,?,?)",(media_id,uid,device_id,mime,filename,raw,len(raw),now))
+    return {"id":media_id,"filename":filename,"mimeType":mime,"sizeBytes":len(raw),"createdAt":now}
+
+@app.get("/api/media")
+def list_media(uid:str=Depends(current_uid)):
+    with db() as c: rows=c.execute("SELECT id,device_id,mime_type,filename,size_bytes,created FROM media_files WHERE uid=? ORDER BY created DESC LIMIT 100",(uid,)).fetchall()
+    return {"items":[{"id":r["id"],"deviceId":r["device_id"],"mimeType":r["mime_type"],"filename":r["filename"],"sizeBytes":r["size_bytes"],"createdAt":r["created"]} for r in rows]}
+
+@app.get("/api/media/{media_id}")
+def view_media(media_id:str,uid:str=Depends(current_uid)):
+    with db() as c: row=c.execute("SELECT mime_type,data FROM media_files WHERE id=? AND uid=?",(media_id,uid)).fetchone()
+    if not row: raise HTTPException(404,"Photo not found.")
+    return Response(content=bytes(row["data"]),media_type=row["mime_type"],headers={"Cache-Control":"private, no-store","Content-Disposition":"inline"})
+
+@app.delete("/api/media/{media_id}")
+def delete_media(media_id:str,uid:str=Depends(current_uid)):
+    with db() as c:
+        cur=c.execute("DELETE FROM media_files WHERE id=? AND uid=?",(media_id,uid))
+        if cur.rowcount!=1: raise HTTPException(404,"Photo not found.")
+    return {"deleted":True}
+
+def _owned_device(c,uid,device_id):
+    if not c.execute("SELECT 1 FROM devices WHERE device_id=? AND uid=?",(device_id,uid)).fetchone(): raise HTTPException(404,"Device not found.")
+
+@app.post("/api/webrtc/sessions")
+def create_webrtc_session(payload:dict,uid:str=Depends(current_uid)):
+    device_id=str(payload.get("deviceId",""))[:80]
+    if not device_id or payload.get("consentAccepted") is not True: raise HTTPException(400,"Explicit on-device consent is required before live sharing.")
+    domain=os.getenv("METERED_DOMAIN","").strip().removeprefix("https://").removeprefix("http://").strip("/")
+    secret_key=os.getenv("METERED_SECRET_KEY","").strip()
+    if not domain or not secret_key: raise HTTPException(503,"Live sharing is not configured.")
+    with db() as c: _owned_device(c,uid,device_id)
+    endpoint="https://"+domain+"/api/v1/turn/credential?secretKey="+quote(secret_key,safe="")
+    body=json.dumps({"expiryInSeconds":3600,"label":"familyguard-"+secrets.token_hex(6)}).encode()
+    req=urllib.request.Request(endpoint,data=body,headers={"Content-Type":"application/json","Accept":"application/json"},method="POST")
+    try:
+        with urllib.request.urlopen(req,timeout=12) as response: credential=json.loads(response.read(65536))
+        api_key=credential.get("apiKey")
+        if not api_key: raise ValueError("Missing Metered API key")
+        get_url="https://"+domain+"/api/v1/turn/credentials?apiKey="+quote(str(api_key),safe="")
+        with urllib.request.urlopen(get_url,timeout=12) as response: ice=json.loads(response.read(65536))
+        if not isinstance(ice,list) or not ice: raise ValueError("Missing ICE servers")
+    except Exception: raise HTTPException(502,"Could not obtain temporary ICE credentials from Metered.")
+    sid=secrets.token_urlsafe(24); now=time.time(); expires=now+600
+    with db() as c: c.execute("INSERT INTO webrtc_sessions(id,uid,device_id,expires,created,status) VALUES(?,?,?,?,?,'active')",(sid,uid,device_id,expires,now))
+    return {"sessionId":sid,"expiresAt":expires,"iceServers":ice}
+
+@app.post("/api/webrtc/{session_id}/signals")
+def post_webrtc_signal(session_id:str,payload:dict,uid:str=Depends(current_uid)):
+    kind=str(payload.get("kind","")); data=payload.get("payload")
+    if kind not in {"offer","answer","ice","end"} or not isinstance(data,(dict,list,str)) or len(json.dumps(data))>12000: raise HTTPException(400,"Invalid signaling message.")
+    with db() as c:
+        s=c.execute("SELECT uid,expires,status FROM webrtc_sessions WHERE id=?",(session_id,)).fetchone()
+        if not s or s["uid"]!=uid or s["expires"]<time.time() or s["status"]!="active": raise HTTPException(404,"Active session not found.")
+        c.execute("INSERT INTO webrtc_signals(id,session_id,uid,kind,payload,created) VALUES(?,?,?,?,?,?)",(secrets.token_urlsafe(16),session_id,uid,kind,json.dumps(data,separators=(",",":")),time.time()))
+        if kind=="end": c.execute("UPDATE webrtc_sessions SET status='ended' WHERE id=?",(session_id,))
+    return {"accepted":True}
+
+@app.get("/api/webrtc/{session_id}/signals")
+def get_webrtc_signals(session_id:str,uid:str=Depends(current_uid)):
+    with db() as c:
+        s=c.execute("SELECT uid,expires,status FROM webrtc_sessions WHERE id=?",(session_id,)).fetchone()
+        if not s or s["uid"]!=uid: raise HTTPException(404,"Session not found.")
+        rows=c.execute("SELECT kind,payload,created FROM webrtc_signals WHERE session_id=? AND uid<>? ORDER BY created LIMIT 50",(session_id,uid)).fetchall()
+    return {"signals":[{"kind":r["kind"],"payload":json.loads(r["payload"]),"createdAt":r["created"]} for r in rows]}
+
+@app.post("/api/devices/{device_id}/commands")
+def enqueue_remote_command(device_id:str,payload:dict,uid:str=Depends(current_uid)):
+    kind=str(payload.get("kind",""))
+    if kind not in {"alert","ring","in_app_lock_request"}: raise HTTPException(400,"Unsupported remote command.")
+    if kind=="in_app_lock_request" and payload.get("requiresLocalAcceptance") is not True: raise HTTPException(400,"Temporary in-app lock requires explicit local acceptance.")
+    message=str(payload.get("message","FamilyGuard alert"))[:180]
+    now=time.time(); cid=secrets.token_urlsafe(18); expires=now+min(300,max(30,int(payload.get("ttlSeconds",120))))
+    with db() as c:
+        _owned_device(c,uid,device_id)
+        c.execute("INSERT INTO remote_commands(id,uid,device_id,kind,payload,status,created,expires) VALUES(?,?,?,?,?,'pending',?,?)",(cid,uid,device_id,kind,json.dumps({"message":message,"requiresLocalAcceptance":kind=="in_app_lock_request"}),now,expires))
+    return {"commandId":cid,"status":"pending","expiresAt":expires,"note":"Android OS restrictions are not changed; an in-app lock request requires acceptance on the device."}
+
+@app.get("/api/devices/{device_id}/commands")
+def poll_remote_commands(device_id:str,uid:str=Depends(current_uid)):
+    now=time.time()
+    with db() as c:
+        _owned_device(c,uid,device_id)
+        c.execute("UPDATE remote_commands SET status='expired' WHERE device_id=? AND uid=? AND status='pending' AND expires<?",(device_id,uid,now))
+        rows=c.execute("SELECT id,kind,payload,expires FROM remote_commands WHERE device_id=? AND uid=? AND status='pending' AND expires>=? ORDER BY created LIMIT 20",(device_id,uid,now)).fetchall()
+        c.execute("UPDATE remote_commands SET status='delivered' WHERE device_id=? AND uid=? AND status='pending' AND expires>=?",(device_id,uid,now))
+    return {"commands":[{"commandId":r["id"],"kind":r["kind"],"payload":json.loads(r["payload"]),"expiresAt":r["expires"]} for r in rows]}
+
+@app.post("/api/devices/{device_id}/commands/{command_id}/ack")
+def acknowledge_remote_command(device_id:str,command_id:str,payload:dict,uid:str=Depends(current_uid)):
+    status=str(payload.get("status",""))
+    if status not in {"accepted","declined","completed"}: raise HTTPException(400,"Invalid acknowledgement.")
+    with db() as c:
+        _owned_device(c,uid,device_id)
+        cur=c.execute("UPDATE remote_commands SET status=?,accepted_at=? WHERE id=? AND device_id=? AND uid=? AND expires>=? AND status IN ('pending','delivered')",(status,time.time(),command_id,device_id,uid,time.time()))
+        if cur.rowcount!=1: raise HTTPException(404,"Command is no longer active.")
+    return {"acknowledged":True,"status":status}
+
+app.mount("/", StaticFiles(directory=str(WEB_DIR), html=True), name="familyguard-web")
