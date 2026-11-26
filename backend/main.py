@@ -210,10 +210,13 @@ def init_db():
         CREATE TABLE IF NOT EXISTS media_files(id TEXT PRIMARY KEY,uid TEXT NOT NULL,device_id TEXT,mime_type TEXT NOT NULL,filename TEXT NOT NULL,data BYTEA NOT NULL,size_bytes INTEGER NOT NULL,created REAL NOT NULL);
         CREATE INDEX IF NOT EXISTS idx_media_files_uid_created ON media_files(uid,created DESC);
         CREATE TABLE IF NOT EXISTS webrtc_sessions(id TEXT PRIMARY KEY,uid TEXT NOT NULL,device_id TEXT NOT NULL,expires REAL NOT NULL,created REAL NOT NULL,status TEXT NOT NULL DEFAULT 'active');
-        CREATE TABLE IF NOT EXISTS webrtc_signals(id TEXT PRIMARY KEY,session_id TEXT NOT NULL,uid TEXT NOT NULL,kind TEXT NOT NULL,payload TEXT NOT NULL,created REAL NOT NULL);
+        CREATE TABLE IF NOT EXISTS webrtc_signals(id TEXT PRIMARY KEY,session_id TEXT NOT NULL,uid TEXT NOT NULL,sender_id TEXT NOT NULL DEFAULT '',kind TEXT NOT NULL,payload TEXT NOT NULL,created REAL NOT NULL);
         CREATE INDEX IF NOT EXISTS idx_webrtc_signals_session ON webrtc_signals(session_id,created);
         CREATE TABLE IF NOT EXISTS remote_commands(id TEXT PRIMARY KEY,uid TEXT NOT NULL,device_id TEXT NOT NULL,kind TEXT NOT NULL,payload TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'pending',created REAL NOT NULL,expires REAL NOT NULL,accepted_at REAL);
         """)
+        signal_columns={r["name"] for r in c.execute("PRAGMA table_info(webrtc_signals)").fetchall()}
+        if "sender_id" not in signal_columns:
+            c.execute("ALTER TABLE webrtc_signals ADD COLUMN sender_id TEXT NOT NULL DEFAULT ''")
         refresh_columns={r["name"] for r in c.execute("PRAGMA table_info(refresh_sessions)").fetchall()}
         if "access_token_hash" not in refresh_columns:
             c.execute("ALTER TABLE refresh_sessions ADD COLUMN access_token_hash TEXT")
@@ -1241,25 +1244,35 @@ def create_webrtc_session(payload:dict,uid:str=Depends(current_uid)):
     with db() as c: c.execute("INSERT INTO webrtc_sessions(id,uid,device_id,expires,created,status) VALUES(?,?,?,?,?,'active')",(sid,uid,device_id,expires,now))
     return {"sessionId":sid,"expiresAt":expires,"iceServers":ice}
 
+@app.get("/api/webrtc/sessions")
+def list_webrtc_sessions(uid:str=Depends(current_uid)):
+    now=time.time()
+    with db() as c:
+        rows=c.execute("SELECT id,device_id,created,expires FROM webrtc_sessions WHERE uid=? AND status='active' AND expires>? ORDER BY created DESC LIMIT 10",(uid,now)).fetchall()
+    return {"sessions":[{"sessionId":r["id"],"deviceId":r["device_id"],"createdAt":r["created"],"expiresAt":r["expires"]} for r in rows]}
+
 @app.post("/api/webrtc/{session_id}/signals")
 def post_webrtc_signal(session_id:str,payload:dict,uid:str=Depends(current_uid)):
     kind=str(payload.get("kind","")); data=payload.get("payload")
-    if kind not in {"offer","answer","ice","end"} or not isinstance(data,(dict,list,str)) or len(json.dumps(data))>12000: raise HTTPException(400,"Invalid signaling message.")
+    sender_id=str(payload.get("senderId",""))[:80]
+    if not sender_id or kind not in {"offer","answer","ice","end"} or not isinstance(data,(dict,list,str)) or len(json.dumps(data))>12000: raise HTTPException(400,"Invalid signaling message.")
     with db() as c:
         s=c.execute("SELECT uid,expires,status FROM webrtc_sessions WHERE id=?",(session_id,)).fetchone()
         if not s or s["uid"]!=uid or s["expires"]<time.time() or s["status"]!="active": raise HTTPException(404,"Active session not found.")
         enforce_rate_limit(c,"webrtc:signal:"+uid+":"+session_id,120)
-        c.execute("INSERT INTO webrtc_signals(id,session_id,uid,kind,payload,created) VALUES(?,?,?,?,?,?)",(secrets.token_urlsafe(16),session_id,uid,kind,json.dumps(data,separators=(",",":")),time.time()))
+        c.execute("INSERT INTO webrtc_signals(id,session_id,uid,sender_id,kind,payload,created) VALUES(?,?,?,?,?,?,?)",(secrets.token_urlsafe(16),session_id,uid,sender_id,kind,json.dumps(data,separators=(",",":")),time.time()))
         if kind=="end": c.execute("UPDATE webrtc_sessions SET status='ended' WHERE id=?",(session_id,))
     return {"accepted":True}
 
 @app.get("/api/webrtc/{session_id}/signals")
-def get_webrtc_signals(session_id:str,uid:str=Depends(current_uid)):
+def get_webrtc_signals(session_id:str,sender_id:str,uid:str=Depends(current_uid)):
+    sender_id=sender_id[:80]
+    if not sender_id: raise HTTPException(400,"A signaling client ID is required.")
     with db() as c:
         s=c.execute("SELECT uid,expires,status FROM webrtc_sessions WHERE id=?",(session_id,)).fetchone()
         if not s or s["uid"]!=uid: raise HTTPException(404,"Session not found.")
-        rows=c.execute("SELECT kind,payload,created FROM webrtc_signals WHERE session_id=? AND uid<>? ORDER BY created LIMIT 50",(session_id,uid)).fetchall()
-    return {"signals":[{"kind":r["kind"],"payload":json.loads(r["payload"]),"createdAt":r["created"]} for r in rows]}
+        rows=c.execute("SELECT sender_id,kind,payload,created FROM webrtc_signals WHERE session_id=? AND sender_id<>? ORDER BY created LIMIT 50",(session_id,sender_id)).fetchall()
+    return {"signals":[{"senderId":r["sender_id"],"kind":r["kind"],"payload":json.loads(r["payload"]),"createdAt":r["created"]} for r in rows]}
 
 @app.post("/api/devices/{device_id}/commands")
 def enqueue_remote_command(device_id:str,payload:dict,uid:str=Depends(current_uid)):
