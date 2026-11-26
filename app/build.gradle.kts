@@ -75,6 +75,7 @@ dependencies {
     implementation("androidx.compose.material3:material3")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.7")
     implementation("androidx.work:work-runtime-ktx:2.10.0")
+    implementation("org.webrtc:google-webrtc:1.0.32006")
 
     testImplementation("junit:junit:4.13.2")
     androidTestImplementation("androidx.test.ext:junit:1.2.1")
