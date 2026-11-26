@@ -58,6 +58,7 @@ if not os.getenv("RENDER_DISK_PATH") and not Path("/var/data").exists():
     DB_PATH=os.getenv("FAMILYGUARD_DB_PATH", str(Path(__file__).resolve().parent/"familyguard.sqlite3"))
 if DB_KIND=="sqlite":
     Path(DB_PATH).parent.mkdir(parents=True,exist_ok=True)
+WEB_DIR = Path(__file__).resolve().parent.parent / "web"
 app=FastAPI(title="FamilyGuard API",version="3.0.0")
 
 class RefreshIn(BaseModel):
