@@ -17,7 +17,7 @@
   const [profile,billing,devices]=await Promise.all([api("/account/profile"),api("/billing/status"),deviceData()]);
   $("fg-overview-account").textContent=(profile.name||profile.email||"Signed-in account")+" · "+(profile.email||"");
   $("fg-overview-plan").textContent="Plan: "+(billing.plan||billing.status||"Free")+" · Premium ₹999/month";
-  $("fg-overview-devices").textContent=devices.length+" registered device(s) · "+devices.filter(x=>x.online).length+" online";
+  $("fg-overview-devices").textContent=devices.length+" registered device(s) · "+devices.filter(x=>x.online).length+" online · "+devices.filter(x=>!x.online).length+" offline";
   const enabled=devices.filter(x=>x.apps_sync_enabled||x.location_granted).length;
   $("fg-overview-consent").textContent=enabled+" device(s) report enabled app/usage or location permissions. Consent controls remain available in the Privacy section below.";
  }
@@ -46,12 +46,13 @@
   for(const d of devices){
    const card=el("article","", "border border-slate-700 rounded-xl p-4 mb-3");
    card.append(el("h3",d.deviceName+" · "+d.platform,"font-semibold"));
-   const labels=Array.isArray(d.installed_apps)?d.installed_apps:[];
+   const entries=Array.isArray(d.installed_apps)?d.installed_apps:[];
+   const labels=entries.map(x=>typeof x==="string"?x:(x?.name||""));
    card.append(el("p","Installed apps: "+Number(d.installed_apps_count||labels.length)+" · Listed here: "+labels.length,"text-sm text-teal-200 mt-2"));
    card.append(el("p","Screen time today: "+Number(d.screen_time_minutes||0)+" minutes","muted text-sm mt-2"));
-   const filtered=labels.filter(x=>String(x).toLowerCase().includes(query));
-   const list=el("ul","", "mt-2 space-y-1 text-sm");
-   filtered.forEach(x=>{const li=document.createElement("li");li.textContent=x;li.className="break-words";list.append(li)});
+   const filtered=entries.filter(x=>{const name=typeof x==="string"?x:(x?.name||"");const pkg=typeof x==="string"?"":(x?.package||"");return (name+" "+pkg).toLowerCase().includes(query)});
+   const list=el("ul","", "mt-2 space-y-2 text-sm");
+   filtered.forEach(x=>{const item=document.createElement("li");item.className="flex items-center gap-3 break-words";const name=typeof x==="string"?x:(x?.name||"Unknown app");if(typeof x==="object"&&x?.icon&&String(x.icon).startsWith("data:image/webp;base64,")){const img=document.createElement("img");img.src=x.icon;img.alt="";img.width=32;img.height=32;img.loading="lazy";img.className="rounded-md shrink-0";item.append(img)}const label=el("span",name+(typeof x==="object"&&x?.package?" · "+x.package:""));item.append(label);list.append(item)});
    if(!filtered.length)list.append(el("li",query?"No matching apps.":"No installed-app list shared yet.","muted"));
    card.append(list,el("p","Last summary sync: "+stamp(d.summary_last_synced_at),"muted text-xs mt-3"));
    if(query&&!filtered.length)card.classList.add("hidden");else visible++;

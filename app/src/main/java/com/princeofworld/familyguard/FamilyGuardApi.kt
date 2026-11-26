@@ -113,13 +113,27 @@ object FamilyGuardApi {
         if (appsEnabled) {
             safe.put("installed_apps_count", summary.optInt("installed_apps_count", 0).coerceIn(0, 10000))
             val source = summary.optJSONArray("installed_apps") ?: org.json.JSONArray()
-            val labels = org.json.JSONArray()
+            val apps = org.json.JSONArray()
             val seen = linkedSetOf<String>()
             for (i in 0 until source.length()) {
-                val label = source.optString(i, "").trim().take(100)
-                if (label.isNotBlank() && seen.add(label) && labels.length() < 100) labels.put(label)
+                if (apps.length() >= 100) break
+                val entry = source.opt(i)
+                if (entry is JSONObject) {
+                    val name = entry.optString("name", "").trim().take(100)
+                    val pkg = entry.optString("package", "").trim().take(180)
+                    val icon = entry.optString("icon", "")
+                    if (name.isNotBlank() && seen.add(if (pkg.isBlank()) name else pkg)) {
+                        val safeEntry = JSONObject().put("name", name)
+                        if (pkg.isNotBlank()) safeEntry.put("package", pkg)
+                        if (icon.startsWith("data:image/webp;base64,") && icon.length <= 8192) safeEntry.put("icon", icon)
+                        apps.put(safeEntry)
+                    }
+                } else {
+                    val label = entry?.toString()?.trim()?.take(100).orEmpty()
+                    if (label.isNotBlank() && seen.add(label)) apps.put(label)
+                }
             }
-            safe.put("installed_apps", labels)
+            safe.put("installed_apps", apps)
             safe.put("screen_time_minutes", summary.optInt("screen_time_minutes", 0).coerceIn(0, 1440))
         } else {
             safe.put("installed_apps_count", 0)

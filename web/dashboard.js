@@ -13,7 +13,7 @@ function addLocation(card,v){
 ownDevices.forEach(v=>{
  let card=document.createElement("div");card.className="border border-slate-700 rounded-xl p-4 mb-3";
  card.append(node(v.deviceName+" · "+v.platform,"font-bold"),node("Device ID: "+v.deviceId,"muted text-xs break-all"),
- node((v.online?"Online":"Offline")+" · Last seen "+new Date(v.lastSeen*1000).toLocaleString()+" · Battery "+(v.batteryPercent==null?"N/A":v.batteryPercent+"%"),"muted text-sm mt-2"));
+ node((v.online?"● ONLINE":"● OFFLINE")+" · Last heartbeat "+(v.lastSeen?new Date(v.lastSeen*1000).toLocaleString():"Unknown")+" · Battery "+(v.batteryPercent==null?"N/A":v.batteryPercent+"%"),"text-sm mt-2 "+(v.online?"text-emerald-300":"text-rose-300")));
  const permissionGrid=document.createElement("div");permissionGrid.className="grid grid-cols-2 md:grid-cols-3 gap-2 mt-3";
  const state=(value)=>value?"ON":"OFF";
  permissionGrid.append(

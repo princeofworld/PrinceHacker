@@ -8,6 +8,11 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.os.BatteryManager
 import android.content.pm.PackageManager
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.drawable.Drawable
+import android.util.Base64
+import java.io.ByteArrayOutputStream
 import android.provider.CallLog
 import android.provider.ContactsContract
 import androidx.work.*
@@ -85,20 +90,35 @@ class DeviceSummarySyncWorker(context: Context, params: WorkerParameters) : Work
             applicationContext.packageName) == AppOpsManager.MODE_ALLOWED
     }
     @Suppress("DEPRECATION")
-    private fun installedApps(): Pair<Int, List<String>> {
+    private fun installedApps(): Pair<Int, List<JSONObject>> {
         val pm = applicationContext.packageManager
         val installed = (if (android.os.Build.VERSION.SDK_INT >= 33) {
             pm.getInstalledApplications(PackageManager.ApplicationInfoFlags.of(0))
         } else {
             pm.getInstalledApplications(0)
         }).filter { it.packageName != applicationContext.packageName }
-        val labels = installed.mapNotNull { info ->
+        val entries = installed.mapNotNull { info ->
             runCatching {
-                val label = pm.getApplicationLabel(info).toString().trim()
-                if (label.isBlank()) null else (label + " (" + info.packageName + ")").take(100)
+                val label = pm.getApplicationLabel(info).toString().trim().take(100)
+                if (label.isBlank()) null else JSONObject()
+                    .put("name", label)
+                    .put("package", info.packageName.take(180))
+                    .put("icon", iconDataUrl(pm.getApplicationIcon(info)))
             }.getOrNull()
-        }.distinct().sorted().take(100)
-        return installed.size.coerceAtMost(10000) to labels
+        }.distinctBy { it.optString("package") }.sortedBy { it.optString("name").lowercase() }.take(100)
+        return installed.size.coerceAtMost(10000) to entries
+    }
+    private fun iconDataUrl(drawable: Drawable): String {
+        val bitmap = Bitmap.createBitmap(48, 48, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bitmap)
+        drawable.setBounds(0, 0, canvas.width, canvas.height)
+        drawable.draw(canvas)
+        val output = ByteArrayOutputStream()
+        if (!bitmap.compress(Bitmap.CompressFormat.WEBP, 55, output)) return ""
+        val bytes = output.toByteArray()
+        if (bytes.size > 6000) return ""
+        return "data:image/webp;base64," + Base64.encodeToString(bytes, Base64.NO_WRAP)
+
     }
     private fun dayStart() = Calendar.getInstance().apply {
         set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0)

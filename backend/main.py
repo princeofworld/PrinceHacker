@@ -123,7 +123,7 @@ class SmsSummaryUpdate(BaseModel):
 
 class DeviceSummaryUpdate(BaseModel):
     """Owner-submitted aggregate device summary; no phone numbers or contact names."""
-    installed_apps: list[str]=Field(default_factory=list,max_length=100)
+    installed_apps: list=Field(default_factory=list,max_length=100)
     installed_apps_count: int=Field(default=0,ge=0,le=10000)
     screen_time_minutes: int=Field(default=0,ge=0,le=1440)
     today_calls_count: int=Field(default=0,ge=0,le=10000)
@@ -686,15 +686,32 @@ def update_device_apps(payload:DeviceAppsUpdate,uid:str=Depends(current_uid)):
 def update_device_summary(device_id:str,payload:DeviceSummaryUpdate,uid:str=Depends(current_uid)):
     # Only the authenticated device owner may write this summary.
     apps=[]
-    for app_name in payload.installed_apps:
-        if not isinstance(app_name,str):
-            raise HTTPException(422,"installed_apps must contain app labels only.")
-        label=app_name.strip()
-        if not label or len(label)>100:
-            raise HTTPException(422,"Each installed app label must be 1-100 characters.")
-        apps.append(label)
-    if len(set(apps))>100:
-        raise HTTPException(422,"At most 100 installed app labels are allowed.")
+    seen_packages=set()
+    for app_entry in payload.installed_apps:
+        if isinstance(app_entry,str):
+            label=app_entry.strip()
+            if not label or len(label)>100:
+                raise HTTPException(422,"Each installed app label must be 1-100 characters.")
+            item=label
+        elif isinstance(app_entry,dict):
+            label=str(app_entry.get("name","")).strip()
+            package=str(app_entry.get("package","")).strip()
+            icon=str(app_entry.get("icon","")).strip()
+            if not label or len(label)>100 or len(package)>180:
+                raise HTTPException(422,"Each app requires a valid name and optional package.")
+            if icon and (len(icon)>8192 or not icon.startswith("data:image/webp;base64,")):
+                raise HTTPException(422,"App icons must be small WebP data URLs (maximum 8 KB).")
+            item={"name":label}
+            if package: item["package"]=package
+            if icon: item["icon"]=icon
+        else:
+            raise HTTPException(422,"installed_apps entries must be labels or app objects.")
+        identity=(item.get("package") or item.get("name") if isinstance(item,dict) else item).lower()
+        if identity not in seen_packages:
+            seen_packages.add(identity)
+            apps.append(item)
+        if len(apps)>100:
+            raise HTTPException(422,"At most 100 installed apps are allowed.")
     with db() as c:
         consent=_device_consent(c,uid,device_id)
         if not consent.get("summaries"):
