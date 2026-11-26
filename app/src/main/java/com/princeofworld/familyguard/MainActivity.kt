@@ -846,6 +846,12 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun requestScreenShare() {
+        if (Build.VERSION.SDK_INT >= 33 &&
+            ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+            notice = "Allow notifications first so Android can keep the live-sharing Stop control visible."
+            notificationsPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+            return
+        }
         try {
             val manager = getSystemService(MediaProjectionManager::class.java)
             screenCaptureLauncher.launch(manager.createScreenCaptureIntent())
@@ -855,6 +861,12 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun requestCameraShare() {
+        if (Build.VERSION.SDK_INT >= 33 &&
+            ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+            notice = "Allow notifications first so Android can keep the live-sharing Stop control visible."
+            notificationsPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+            return
+        }
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
             LiveSharingService.startCamera(this)
         } else {
