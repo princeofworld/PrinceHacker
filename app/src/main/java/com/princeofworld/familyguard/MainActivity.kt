@@ -1237,22 +1237,6 @@ private fun FamilyGuardDashboard(
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     Card(modifier = Modifier.weight(1f)) {
                         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Text("SOS Alert", style = MaterialTheme.typography.titleMedium)
-                            Text("Send an emergency alert", style = MaterialTheme.typography.bodySmall)
-                            Button(onClick = onSos, modifier = Modifier.fillMaxWidth()) { Text("OPEN") }
-                        }
-                    }
-                    Card(modifier = Modifier.weight(1f)) {
-                        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Text("Family Dashboard", style = MaterialTheme.typography.titleMedium)
-                            Text("View family devices", style = MaterialTheme.typography.bodySmall)
-                            Button(onClick = onOpenWebsite, modifier = Modifier.fillMaxWidth()) { Text("OPEN") }
-                        }
-                    }
-                }
-                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                    Card(modifier = Modifier.weight(1f)) {
-                        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                             Text("Photo Gallery", style = MaterialTheme.typography.titleMedium)
                             Text("Select photos to share", style = MaterialTheme.typography.bodySmall)
                             OutlinedButton(onClick = onPickPhoto, modifier = Modifier.fillMaxWidth()) { Text("CHOOSE") }
