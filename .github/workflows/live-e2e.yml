@@ -1,4 +1,4 @@
-name: FamilyGuard Live E2E
+name: PrinceCircle Live E2E
 
 on:
   push:
@@ -9,7 +9,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: familyguard-live-e2e
+  group: princecircle-live-e2e
   cancel-in-progress: true
 
 jobs:
@@ -72,7 +72,7 @@ jobs:
         if: always()
         run: |
           {
-            echo "## FamilyGuard Live E2E"
+            echo "## PrinceCircle Live E2E"
             echo ""
             echo "- Target: ${LIVE_BASE_URL:-${RENDER_EXTERNAL_URL:-https://princehacker.onrender.com}}"
             if [[ "${{ steps.live-tests.outcome }}" == "success" ]]; then

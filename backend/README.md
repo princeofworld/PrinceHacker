@@ -36,3 +36,12 @@ No Firebase or API key secrets are needed. Google Play service-account credentia
 - Backups are manual downloads, not automatic scheduled snapshots. Download on a regular schedule and keep encrypted copies in a separate secure location.
 - Recovery requires the same `BACKUP_ENCRYPTION_KEY` and database connection. Run `python backup_restore.py restore /path/to/file.fgbk --confirm-overwrite` from the backend directory (or run the module from the repository root). Restore replaces all records in the selected database. Test recovery against a separate staging database first.
 - For SQLite, mount persistent storage and set `FAMILYGUARD_DB_PATH` to that mounted path. For PostgreSQL, configure `DATABASE_URL` to a managed database with its own provider backups. The health endpoint reports storage and backup-configuration warnings; a green application health check alone is not proof of backup recoverability.
+
+
+## PrinceCircle production payment configuration
+
+- PostgreSQL is selected through `DATABASE_URL`; keep the Render database URL in the service's private environment settings.
+- UPI UTR submissions remain pending until an authenticated administrator verifies them. Never mark a UTR paid based only on a client response or screenshot.
+- Razorpay recurring billing is disabled by default. To enable it, configure `RAZORPAY_ENABLED=true`, `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET`, `RAZORPAY_PLAN_ID`, and `RAZORPAY_WEBHOOK_SECRET` in Render's private environment settings, then register the webhook endpoint and verify its signature. Do not commit live credentials.
+- `/health` reports Razorpay and webhook readiness separately. A false readiness value means checkout/webhook verification must not be advertised as active.
+- Android Usage Access is a user-controlled special app access. The app must direct the device user to Android Settings and re-check access when the app resumes; it must never attempt to silently grant or bypass the restriction.

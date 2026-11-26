@@ -8,6 +8,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.location.Location
 import android.location.LocationManager
+import android.media.projection.MediaProjectionManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -16,15 +17,18 @@ import androidx.work.WorkManager
 import androidx.core.content.ContextCompat
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
@@ -51,6 +55,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.rememberCoroutineScope
 import kotlinx.coroutines.launch
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import java.text.DateFormat
@@ -67,15 +73,16 @@ class MainActivity : ComponentActivity() {
     private var usageText by mutableStateOf("Usage report is available to Premium subscribers after enabling Usage Access.")
     private var premium by mutableStateOf(false)
     private var billingReady by mutableStateOf(false)
-    private var billingMessage by mutableStateOf("Sign in to check your FamilyGuard plan.")
+    private var billingMessage by mutableStateOf("Sign in to check your PrinceCircle plan.")
     private var premiumPriceLabel by mutableStateOf("₹999 / month")
     private val verificationExecutor = Executors.newSingleThreadExecutor()
     private var notice by mutableStateOf<String?>(null)
     private var pendingDisclosure by mutableStateOf<String?>(null)
     private var permissionStatusText by mutableStateOf("Checking permissions…")
     private var usageAccessGranted by mutableStateOf(false)
+    private var permissionSetupComplete by mutableStateOf(false)
     private var showDeleteDataDialog by mutableStateOf(false)
-    private var familyStatus by mutableStateOf("Sign in to FamilyGuard to create or join a family.")
+    private var familyStatus by mutableStateOf("Sign in to PrinceCircle to create or join a family.")
     private var familyId by mutableStateOf("")
     private var inviteCode by mutableStateOf("")
     private var familyLocationsText by mutableStateOf("No family locations loaded.")
@@ -87,6 +94,9 @@ class MainActivity : ComponentActivity() {
     private var profilePhone by mutableStateOf("")
     private var profileMessage by mutableStateOf("Loading profile…")
     private var remoteConsentStatus by mutableStateOf("Server consent has not been refreshed yet.")
+    private var remoteLockRequestId by mutableStateOf<String?>(null)
+    private var remoteLockMessage by mutableStateOf("A family member requested a temporary in-app lock.")
+    private var inAppLocked by mutableStateOf(false)
 
     private val locationPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
@@ -112,6 +122,42 @@ class MainActivity : ComponentActivity() {
         pendingDisclosure = null
         if (installedAppsSync && hasUsageAccess()) DeviceSummarySyncScheduler.schedule(this)
         else if (installedAppsSync && !hasUsageAccess()) updateInstalledAppsSync(false)
+    }
+
+    private val screenCaptureLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        val data = result.data
+        if (result.resultCode == RESULT_OK && data != null) {
+            LiveSharingService.startScreen(this, result.resultCode, data)
+            notice = "Screen sharing started. A persistent notification provides the Stop control."
+        } else {
+            notice = "Screen sharing was cancelled. Nothing was captured."
+        }
+    }
+
+    private val cameraPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) {
+            LiveSharingService.startCamera(this)
+            notice = "Camera sharing started. A persistent notification provides the Stop control."
+        } else {
+            notice = "Camera permission was not granted. Camera sharing remains off."
+        }
+    }
+
+    private val photoPickerLauncher = registerForActivityResult(
+        ActivityResultContracts.PickVisualMedia()
+    ) { uri ->
+        if (uri != null) verificationExecutor.execute {
+            try {
+                FamilyGuardApi.uploadPhoto(this, uri)
+                runOnUiThread { notice = "Selected photo uploaded to your private PrinceCircle gallery." }
+            } catch (error: Exception) {
+                runOnUiThread { notice = "Photo upload failed: ${error.message}" }
+            }
+        }
     }
 
     private val callsSummaryPermissionLauncher = registerForActivityResult(
@@ -150,7 +196,18 @@ class MainActivity : ComponentActivity() {
         }
         setContent {
             MaterialTheme(colorScheme = darkColorScheme()) {
-                if (!signedIn) {
+
+                if (inAppLocked) {
+                    Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+                        Column(modifier = Modifier.fillMaxSize().padding(24.dp), verticalArrangement = Arrangement.Center) {
+                            Text("PrinceCircle temporarily locked", style = MaterialTheme.typography.headlineMedium)
+                            Spacer(Modifier.height(12.dp))
+                            Text("This pause applies only inside PrinceCircle. Android and other apps are unaffected.")
+                            Spacer(Modifier.height(20.dp))
+                            Button(onClick = { inAppLocked = false }, modifier = Modifier.fillMaxWidth()) { Text("UNLOCK APP") }
+                        }
+                    }
+                } else if (!signedIn) {
                     LoginScreen(
                         message = loginMessage,
                         onLogin = { email, password -> authenticateFamily(email, password) },
@@ -172,6 +229,7 @@ class MainActivity : ComponentActivity() {
                     usageText = usageText,
                     permissionStatusText = permissionStatusText,
                     usageAccessGranted = usageAccessGranted,
+                    permissionSetupComplete = permissionSetupComplete,
                     familyConsentEnabled = familyConsentEnabled,
                     onSetupPermissions = { beginPermissionSetup() },
                     onUsage = { openUsageAccessSettings() },
@@ -194,13 +252,36 @@ class MainActivity : ComponentActivity() {
                     profileMessage = profileMessage,
                     remoteConsentStatus = remoteConsentStatus,
                     onRefreshConsent = { refreshDeviceConsent(manual = true) },
-                    onSaveProfile = { name, phone -> saveProfile(name, phone) }
+                    onSaveProfile = { name, phone -> saveProfile(name, phone) },
+                    onPickPhoto = { photoPickerLauncher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
+                    onStartScreenShare = { requestScreenShare() },
+                    onStartCameraShare = { requestCameraShare() },
+                    onStopMediaShare = { LiveSharingService.stop(this) }
                 )
+
+                remoteLockRequestId?.let {
+                    AlertDialog(
+                        onDismissRequest = { acknowledgeLockRequest(false) },
+                        title = { Text("Temporary in-app lock request") },
+                        text = { Text("$remoteLockMessage\n\nThis affects only the PrinceCircle app. You can decline; accepting does not lock Android or other apps.") },
+                        confirmButton = { TextButton(onClick = { acknowledgeLockRequest(true) }) { Text("Accept for this app") } },
+                        dismissButton = { TextButton(onClick = { acknowledgeLockRequest(false) }) { Text("Decline") } }
+                    )
+                }
+                if (inAppLocked) {
+                    AlertDialog(
+                        onDismissRequest = { },
+                        title = { Text("PrinceCircle temporarily locked") },
+                        text = { Text("This is an app-only pause. Android remains fully available, and you can unlock this app now.") },
+                        confirmButton = { TextButton(onClick = { inAppLocked = false }) { Text("Unlock app") } }
+                    )
+                }
+
                 pendingDisclosure?.let { step ->
                     val disclosure = when (step) {
-                        "location" -> "LOCATION SHARING DISCLOSURE: If you agree and grant Android foreground location permission, FamilyGuard collects your device's latitude/longitude, accuracy, capture time and optional battery percentage. When you separately opt in and start sharing, these details are sent over HTTPS to members of the family you joined. A persistent notification remains visible. Each session ends automatically after 10 minutes; sharing and consent are then switched off, and you must press Start again for another session. You can stop earlier or revoke permission at any time. FamilyGuard does not request background location permission."
-                        "notifications" -> "FamilyGuard requests permission for visible safety and account notices. You can deny this and continue using features that do not require notifications."
-                        "usage_restricted" -> "Android blocks Usage Access for some sideloaded apps until the device user allows restricted settings. FamilyGuard cannot switch this on. On the next screen, open the three-dot menu and choose Allow restricted settings. Android may ask you to confirm your device lock. Return to FamilyGuard and tap One-Click Permission Setup again; then enable FamilyGuard in Usage Access. If Android does not offer this option, do not bypass the device's security controls."
+                        "location" -> "LOCATION SHARING DISCLOSURE: If you agree and grant Android foreground location permission, PrinceCircle collects your device's latitude/longitude, accuracy, capture time and optional battery percentage. When you separately opt in and start sharing, these details are sent over HTTPS to members of the family you joined. A persistent notification remains visible. Each session ends automatically after 10 minutes; sharing and consent are then switched off, and you must press Start again for another session. You can stop earlier or revoke permission at any time. PrinceCircle does not request background location permission."
+                        "notifications" -> "PrinceCircle requests permission for visible safety and account notices. You can deny this and continue using features that do not require notifications."
+                        "usage_restricted" -> "Android blocks Usage Access for some sideloaded apps until the device user allows restricted settings. PrinceCircle cannot switch this on. On the next screen, open the three-dot menu and choose Allow restricted settings. Android may ask you to confirm your device lock. Return to PrinceCircle and tap One-Click Permission Setup again; then enable PrinceCircle in Usage Access. If Android does not offer this option, do not bypass the device's security controls."
                         else -> "This optional Premium report reads app usage on this device. Android will open Usage Access settings so you can explicitly enable or decline it."
                     }
                     AlertDialog(
@@ -224,7 +305,7 @@ class MainActivity : ComponentActivity() {
                                                 )
                                             )
                                         } catch (_: Exception) {
-                                            notice = "Could not open App Info. Open Android Settings > Apps > FamilyGuard manually, then review the three-dot menu."
+                                            notice = "Could not open App Info. Open Android Settings > Apps > PrinceCircle manually, then review the three-dot menu."
                                         }
                                     }
                                     "usage" -> if (premium) usageSettingsLauncher.launch(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS))
@@ -238,7 +319,7 @@ class MainActivity : ComponentActivity() {
                 if (showDeleteDataDialog) {
                     AlertDialog(
                         onDismissRequest = { showDeleteDataDialog = false },
-                        title = { Text("Delete FamilyGuard account?") },
+                        title = { Text("Delete PrinceCircle account?") },
                         text = { Text("This permanently deletes your account, device registrations, payment-review records and family membership. Any family you own will be transferred to a remaining member or deleted if empty. This cannot be undone. Direct UPI payments do not create recurring mandates.") },
                         confirmButton = {
                             TextButton(onClick = {
@@ -257,7 +338,7 @@ class MainActivity : ComponentActivity() {
                                             consentAccepted = false
                                             familyConsentEnabled = false
                                             showDeleteDataDialog = false
-                                            notice = "Your FamilyGuard account and associated server data were deleted."
+                                            notice = "Your PrinceCircle account and associated server data were deleted."
                                         }
                                     } catch (e: Exception) {
                                         runOnUiThread { notice = e.message ?: "Account deletion failed. Please try again." }
@@ -271,11 +352,97 @@ class MainActivity : ComponentActivity() {
                 notice?.let { message ->
                     AlertDialog(
                         onDismissRequest = { notice = null },
-                        title = { Text("FamilyGuard") },
+                        title = { Text("PrinceCircle") },
                         text = { Text(message) },
                         confirmButton = { TextButton(onClick = { notice = null }) { Text("OK") } }
                     )
                 }
+            }
+        }
+    }
+
+
+    /**
+     * Remote commands are fetched only while the app is open/resumed. Alert and ring
+     * commands create ordinary user-visible notifications. A lock command can only
+     * show a local confirmation; accepting it activates a dismissible in-app screen.
+     */
+    private fun pollRemoteCommands() {
+        if (!signedIn) return
+        verificationExecutor.execute {
+            try {
+                FamilyGuardApi.registerThisDevice(this)
+                val deviceId = getSharedPreferences("familyguard_family", Context.MODE_PRIVATE)
+                    .getString("deviceId", null) ?: return@execute
+                val result = FamilyGuardApi.get(this, "/api/devices/$deviceId/commands")
+                val commands = result.optJSONArray("commands") ?: return@execute
+                for (i in 0 until commands.length()) {
+                    val command = commands.optJSONObject(i) ?: continue
+                    val commandId = command.optString("commandId")
+                    val kind = command.optString("kind")
+                    val payload = command.optJSONObject("payload") ?: JSONObject()
+                    val message = payload.optString("message", "PrinceCircle alert").take(180)
+                    when (kind) {
+                        "alert", "ring" -> {
+                            if (showRemoteSafetyNotification(commandId, kind, message)) {
+                                FamilyGuardApi.post(this, "/api/devices/$deviceId/commands/$commandId/ack",
+                                    JSONObject().put("status", "completed"))
+                            }
+                        }
+                        "in_app_lock_request" -> runOnUiThread {
+                            if (remoteLockRequestId == null && !inAppLocked) {
+                                remoteLockRequestId = commandId
+                                remoteLockMessage = message
+                            }
+                        }
+                    }
+                }
+            } catch (error: Exception) {
+                requireLoginAfterAuthFailure(error)
+            }
+        }
+    }
+
+    private fun showRemoteSafetyNotification(commandId: String, kind: String, message: String): Boolean {
+        val manager = getSystemService(Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
+        val channelId = "princecircle_remote_safety"
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
+            manager.getNotificationChannel(channelId) == null) {
+            manager.createNotificationChannel(android.app.NotificationChannel(
+                channelId, "Family safety alerts", android.app.NotificationManager.IMPORTANCE_HIGH
+            ))
+        }
+        val launch = Intent(this, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
+        }
+        val pending = android.app.PendingIntent.getActivity(
+            this, commandId.hashCode(), launch,
+            android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
+        )
+        val title = if (kind == "ring") "FamilyCircle ring" else "FamilyCircle alert"
+        if (Build.VERSION.SDK_INT >= 33 &&
+            ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) return false
+        val builder = android.app.Notification.Builder(this, channelId)
+        val notification = builder.setSmallIcon(android.R.drawable.ic_dialog_info)
+            .setContentTitle(title).setContentText(message).setStyle(
+                android.app.Notification.BigTextStyle().bigText(message)
+            ).setContentIntent(pending).setAutoCancel(true).build()
+        manager.notify(commandId.hashCode(), notification)
+        return true
+    }
+
+    private fun acknowledgeLockRequest(accepted: Boolean) {
+        val commandId = remoteLockRequestId ?: return
+        val deviceId = getSharedPreferences("familyguard_family", Context.MODE_PRIVATE)
+            .getString("deviceId", null) ?: return
+        remoteLockRequestId = null
+        verificationExecutor.execute {
+            try {
+                FamilyGuardApi.post(this, "/api/devices/$deviceId/commands/$commandId/ack",
+                    JSONObject().put("status", if (accepted) "accepted" else "declined"))
+                if (accepted) runOnUiThread { inAppLocked = true }
+            } catch (error: Exception) {
+                runOnUiThread { notice = "Could not acknowledge lock request: ${error.message}" }
             }
         }
     }
@@ -289,6 +456,7 @@ class MainActivity : ComponentActivity() {
         locationSharingActive = getSharedPreferences("familyguard_family", Context.MODE_PRIVATE)
             .getString("locationSessionStatus", "stopped") == "active"
         if (signedIn) refreshDeviceConsent()
+        if (signedIn) pollRemoteCommands()
         updatePermissionStatus()
     }
 
@@ -374,7 +542,7 @@ class MainActivity : ComponentActivity() {
                     if (manual) DeviceSummarySyncScheduler.syncNow(this)
                     else DeviceSummarySyncScheduler.schedule(this)
                 }
-                if (manual) notice = "Latest device consent refreshed from your FamilyGuard account."
+                if (manual) notice = "Latest device consent refreshed from your PrinceCircle account."
             }
         } catch (e: Exception) {
             runOnUiThread {
@@ -422,7 +590,7 @@ class MainActivity : ComponentActivity() {
                 runOnUiThread {
                     profileName = profile.optString("name", "")
                     profilePhone = profile.optString("phone", "")
-                    profileMessage = "Profile saved to your FamilyGuard account."
+                    profileMessage = "Profile saved to your PrinceCircle account."
                 }
             } catch (e: Exception) {
                 requireLoginAfterAuthFailure(e)
@@ -613,7 +781,7 @@ class MainActivity : ComponentActivity() {
 
     private fun startFamilyLocationSharing() {
         if (!familyConsentEnabled) {
-            notice = "Location sharing is not enabled by your family consent settings. Enable consent on the FamilyGuard website first."
+            notice = "Location sharing is not enabled by your family consent settings. Enable consent on the PrinceCircle website first."
             return
         }
         if (!hasLocationPermission()) {
@@ -627,7 +795,7 @@ class MainActivity : ComponentActivity() {
         }
         if (familyId.isBlank()) { notice = "Sign in and create or join a family first."; return }
         if (BuildConfig.FAMILYGUARD_API_BASE_URL.isBlank()) {
-            notice = "FamilyGuard service URL is not configured. Please try again after the service is available."
+            notice = "PrinceCircle service URL is not configured. Please try again after the service is available."
             return
         }
         runFamilyTask {
@@ -677,6 +845,35 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    private fun requestScreenShare() {
+        if (Build.VERSION.SDK_INT >= 33 &&
+            ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+            notice = "Allow notifications first so Android can keep the live-sharing Stop control visible."
+            notificationsPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+            return
+        }
+        try {
+            val manager = getSystemService(MediaProjectionManager::class.java)
+            screenCaptureLauncher.launch(manager.createScreenCaptureIntent())
+        } catch (error: Exception) {
+            notice = "Could not request Android screen capture: ${error.message}"
+        }
+    }
+
+    private fun requestCameraShare() {
+        if (Build.VERSION.SDK_INT >= 33 &&
+            ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+            notice = "Allow notifications first so Android can keep the live-sharing Stop control visible."
+            notificationsPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+            return
+        }
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
+            LiveSharingService.startCamera(this)
+        } else {
+            cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
+        }
+    }
+
     private fun openWebPage(url: String) {
         try { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) }
         catch (_: Exception) { notice = "The page could not be opened." }
@@ -712,9 +909,10 @@ class MainActivity : ComponentActivity() {
             hasUsageAccess() -> "Granted"
             !premium -> "Premium only"
             Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && !restrictedHelpShown -> "Action needed: review Android Restricted Settings"
-            else -> "Pending: enable FamilyGuard in Usage Access settings"
+            else -> "Pending: enable PrinceCircle in Usage Access settings"
         }
         usageAccessGranted = hasUsageAccess()
+        permissionSetupComplete = hasLocationPermission() && hasNotificationPermission() && (!premium || hasUsageAccess())
         permissionStatusText = "Location: $location\nNotifications: $notifications\nUsage Access: $usage\nBackground location permission: Not requested; sharing uses a user-started foreground service.\nBattery exemption: Not requested (not needed)"
     }
 
@@ -767,10 +965,10 @@ class MainActivity : ComponentActivity() {
                 val apkUrl = versionData.optString("apkUrl", "")
                 runOnUiThread {
                     if (latestCode > currentCode && apkUrl.startsWith("https://")) {
-                        notice = "FamilyGuard update " + versionData.optString("versionName") + " is available. The official APK will open in your browser. Review Android's installer prompt before updating."
+                        notice = "PrinceCircle update " + versionData.optString("versionName") + " is available. The official APK will open in your browser. Review Android's installer prompt before updating."
                         openWebPage(apkUrl)
                     } else {
-                        notice = "FamilyGuard is up to date. Current version: " + packageManager.getPackageInfo(packageName, 0).versionName + "."
+                        notice = "PrinceCircle is up to date. Current version: " + packageManager.getPackageInfo(packageName, 0).versionName + "."
                     }
                 }
             } catch (e: Exception) {
@@ -794,7 +992,7 @@ class MainActivity : ComponentActivity() {
 
     private fun openUsageAccessSettings() {
         if (!premium) {
-            notice = "App Usage & Screen Time reports are a Premium feature. Subscribe through the official FamilyGuard website first."
+            notice = "App Usage & Screen Time reports are a Premium feature. Subscribe through the official PrinceCircle website first."
             return
         }
         val restrictedHelpShown = getSharedPreferences("familyguard_permissions", Context.MODE_PRIVATE)
@@ -816,7 +1014,7 @@ class MainActivity : ComponentActivity() {
             return
         }
         if (!hasUsageAccess()) {
-            usageText = "Usage Access is not enabled. Open Usage Access settings and explicitly allow FamilyGuard."
+            usageText = "Usage Access is not enabled. Open Usage Access settings and explicitly allow PrinceCircle."
             return
         }
         try {
@@ -908,7 +1106,7 @@ class MainActivity : ComponentActivity() {
                 }
                 if (location == null) throw IllegalStateException("A fresh GPS location is unavailable. Try again outdoors.")
                 FamilyGuardApi.sendSosAlert(this, deviceId, location)
-                runOnUiThread { notice = "SOS emergency alert sent to your FamilyGuard account." }
+                runOnUiThread { notice = "SOS emergency alert sent to your PrinceCircle account." }
             } catch (e: Exception) {
                 runOnUiThread { notice = "SOS was not sent: " + (e.message ?: "network or location error") }
             }
@@ -928,19 +1126,19 @@ private fun ParentalConsentDisclosureScreen(
             modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
-            Text("FamilyGuard — Important privacy notice", style = MaterialTheme.typography.headlineMedium)
+            Text("PrinceCircle — Important privacy notice", style = MaterialTheme.typography.headlineMedium)
             Text(
-                "A parent or legal guardian must review and accept this notice before FamilyGuard can request location permission or open Usage Access settings.",
+                "A parent or legal guardian must review and accept this notice before PrinceCircle can request location permission or open Usage Access settings.",
                 style = MaterialTheme.typography.bodyLarge
             )
             Text("Location", style = MaterialTheme.typography.titleMedium)
-            Text("LOCATION SHARING: If you grant foreground location permission and then separately opt in and start a session, FamilyGuard collects latitude/longitude, accuracy, capture time and optional battery percentage and sends them over HTTPS to members of the family you joined. A persistent notification remains visible. Updates may be requested approximately every 60 seconds. Each session automatically stops after 10 minutes, revokes local sharing consent and requires you to press Start again. You can stop earlier or revoke permission at any time. ACCESS_BACKGROUND_LOCATION is not requested.")
+            Text("LOCATION SHARING: If you grant foreground location permission and then separately opt in and start a session, PrinceCircle collects latitude/longitude, accuracy, capture time and optional battery percentage and sends them over HTTPS to members of the family you joined. A persistent notification remains visible. Updates may be requested approximately every 60 seconds. Each session automatically stops after 10 minutes, revokes local sharing consent and requires you to press Start again. You can stop earlier or revoke permission at any time. ACCESS_BACKGROUND_LOCATION is not requested.")
             Text("App usage", style = MaterialTheme.typography.titleMedium)
             Text("APP USAGE: The optional report requires Usage Access separately in Android Settings. The separate Installed Apps & Screen Time Sync switch uploads launchable app labels and today's total screen-time minutes only while ON.")
             Text("Calls and contacts summary", style = MaterialTheme.typography.titleMedium)
-            Text("CALLS & CONTACTS: A separate switch and Android runtime permission are required. While ON, FamilyGuard reads call dates and durations only to calculate today's total call count and total duration, and reads only the total contacts count. Phone numbers, call details, contact names and contact contents are never uploaded. Turning the switch OFF immediately stops future scheduled sync and clears the stored summary when the network is available.")
+            Text("CALLS & CONTACTS: A separate switch and Android runtime permission are required. While ON, PrinceCircle reads call dates and durations only to calculate today's total call count and total duration, and reads only the total contacts count. Phone numbers, call details, contact names and contact contents are never uploaded. Turning the switch OFF immediately stops future scheduled sync and clears the stored summary when the network is available.")
             Text("Data, sharing and safety", style = MaterialTheme.typography.titleMedium)
-            Text("Location sharing is optional. When the device user explicitly enables it, the app sends location to the FamilyGuard server over HTTPS and shows an ongoing Android notification. The user can stop sharing and revoke consent at any time. Never use this app for covert monitoring.")
+            Text("Location sharing is optional. When the device user explicitly enables it, the app sends location to the PrinceCircle server over HTTPS and shows an ongoing Android notification. The user can stop sharing and revoke consent at any time. Never use this app for covert monitoring.")
             Text("Parental consent", style = MaterialTheme.typography.titleMedium)
             Text("A parent or legal guardian should accept only after explaining the features to the device user and obtaining any consent required by local law. This on-device confirmation is not identity or age verification.")
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -970,7 +1168,10 @@ private fun LoginScreen(
     var password by remember { mutableStateOf("") }
     Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
         Column(modifier = Modifier.fillMaxSize().padding(24.dp), verticalArrangement = Arrangement.Center) {
-            Text("FamilyGuard", style = MaterialTheme.typography.headlineLarge)
+            Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Image(painter = painterResource(R.drawable.princecircle_logo), contentDescription = "PrinceCircle crown logo", modifier = Modifier.size(56.dp), contentScale = ContentScale.Fit)
+                        Text("PrinceCircle", style = MaterialTheme.typography.headlineLarge)
+                    }
             Spacer(Modifier.height(8.dp))
             Text("Sign in with the account created on the official website.")
             Spacer(Modifier.height(24.dp))
@@ -982,7 +1183,7 @@ private fun LoginScreen(
             Button(onClick = { onLogin(email, password) }, enabled = email.isNotBlank() && password.isNotBlank(),
                 modifier = Modifier.fillMaxWidth()) { Text("LOGIN") }
             OutlinedButton(onClick = onOpenWebsite, modifier = Modifier.fillMaxWidth()) {
-                Text("Open FamilyGuard Website")
+                Text("Open PrinceCircle Website")
             }
             if (message.isNotBlank()) Text(message, style = MaterialTheme.typography.bodySmall)
             Spacer(Modifier.height(12.dp))
@@ -1003,6 +1204,7 @@ private fun FamilyGuardDashboard(
     usageText: String,
     permissionStatusText: String,
     usageAccessGranted: Boolean,
+    permissionSetupComplete: Boolean,
     familyConsentEnabled: Boolean,
     onSetupPermissions: () -> Unit,
     onUsage: () -> Unit,
@@ -1021,7 +1223,11 @@ private fun FamilyGuardDashboard(
     profileMessage: String,
     remoteConsentStatus: String,
     onRefreshConsent: () -> Unit,
-    onSaveProfile: (String, String) -> Unit
+    onSaveProfile: (String, String) -> Unit,
+    onPickPhoto: () -> Unit,
+    onStartScreenShare: () -> Unit,
+    onStartCameraShare: () -> Unit,
+    onStopMediaShare: () -> Unit
 ) {
     val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
     val scope = rememberCoroutineScope()
@@ -1033,13 +1239,16 @@ private fun FamilyGuardDashboard(
                     modifier = Modifier.fillMaxWidth().padding(20.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    Text("FamilyGuard Menu", style = MaterialTheme.typography.titleLarge)
-                    Text("Safety", style = MaterialTheme.typography.titleMedium)
-                    Button(
-                        onClick = { scope.launch { drawerState.close(); onSos() } },
-                        modifier = Modifier.fillMaxWidth()
-                    ) { Text("SOS Safety Alert") }
+                    Text("PrinceCircle Menu", style = MaterialTheme.typography.titleLarge)
                     Text("Settings", style = MaterialTheme.typography.titleMedium)
+                    OutlinedButton(
+                        onClick = { scope.launch { drawerState.close(); onSetupPermissions() } },
+                        modifier = Modifier.fillMaxWidth()
+                    ) { Text("Permission Settings") }
+                    OutlinedButton(
+                        onClick = { scope.launch { drawerState.close(); onUsage() } },
+                        modifier = Modifier.fillMaxWidth()
+                    ) { Text("Usage Access Settings") }
                     OutlinedButton(
                         onClick = { scope.launch { drawerState.close(); onPrivacy() } },
                         modifier = Modifier.fillMaxWidth()
@@ -1066,8 +1275,50 @@ private fun FamilyGuardDashboard(
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                    Text("FamilyGuard", style = MaterialTheme.typography.headlineLarge)
+                    Text("PrinceCircle", style = MaterialTheme.typography.headlineLarge)
                     TextButton(onClick = { scope.launch { drawerState.open() } }) { Text("☰ Menu") }
+                }
+                Text("Your family tools", style = MaterialTheme.typography.titleMedium)
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Card(modifier = Modifier.weight(1f)) {
+                        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text("SOS Alert", style = MaterialTheme.typography.titleMedium)
+                            Text("Send an emergency alert", style = MaterialTheme.typography.bodySmall)
+                            Button(onClick = onSos, modifier = Modifier.fillMaxWidth()) { Text("OPEN") }
+                        }
+                    }
+                    Card(modifier = Modifier.weight(1f)) {
+                        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text("Family Dashboard", style = MaterialTheme.typography.titleMedium)
+                            Text("View family devices", style = MaterialTheme.typography.bodySmall)
+                            Button(onClick = onOpenWebsite, modifier = Modifier.fillMaxWidth()) { Text("OPEN") }
+                        }
+                    }
+                }
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Card(modifier = Modifier.weight(1f)) {
+                        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text("Photo Gallery", style = MaterialTheme.typography.titleMedium)
+                            Text("Select photos to share", style = MaterialTheme.typography.bodySmall)
+                            OutlinedButton(onClick = onPickPhoto, modifier = Modifier.fillMaxWidth()) { Text("CHOOSE") }
+                        }
+                    }
+                    Card(modifier = Modifier.weight(1f)) {
+                        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text("Location", style = MaterialTheme.typography.titleMedium)
+                            Text(if (locationSharingActive) "Sharing is active" else "Sharing is off", style = MaterialTheme.typography.bodySmall)
+                            OutlinedButton(onClick = { if (locationSharingActive) onStopSharing() else onStartSharing() }, enabled = familyConsentEnabled || locationSharingActive, modifier = Modifier.fillMaxWidth()) { Text(if (locationSharingActive) "STOP" else "START") }
+                        }
+                    }
+                }
+                Card(modifier = Modifier.fillMaxWidth()) {
+                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Text("Live Screen & Camera Sharing", style = MaterialTheme.typography.titleLarge)
+                        Text("Sharing starts only after you choose an option. Android shows its own screen-capture confirmation, and a persistent notification stays visible with a Stop control.", style = MaterialTheme.typography.bodySmall)
+                        Button(onClick = onStartScreenShare, modifier = Modifier.fillMaxWidth()) { Text("START SCREEN SHARING") }
+                        OutlinedButton(onClick = onStartCameraShare, modifier = Modifier.fillMaxWidth()) { Text("START CAMERA SHARING") }
+                        OutlinedButton(onClick = onStopMediaShare, modifier = Modifier.fillMaxWidth()) { Text("STOP LIVE SHARING") }
+                    }
                 }
                 var editableName by remember(profileName) { mutableStateOf(profileName) }
                 var editablePhone by remember(profilePhone) { mutableStateOf(profilePhone) }
@@ -1089,12 +1340,19 @@ private fun FamilyGuardDashboard(
                     }
                 }
                 Card(modifier = Modifier.fillMaxWidth()) {
+                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("Private Photo Gallery", style = MaterialTheme.typography.titleLarge)
+                        Text("Choose photos yourself using Android Photo Picker. Only selected JPEG, PNG, or WebP photos up to 5 MB are uploaded.", style = MaterialTheme.typography.bodySmall)
+                        Button(onClick = onPickPhoto, modifier = Modifier.fillMaxWidth()) { Text("CHOOSE PHOTO") }
+                    }
+                }
+                Card(modifier = Modifier.fillMaxWidth()) {
                     Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                         Text("Location Sharing", style = MaterialTheme.typography.titleLarge)
                         Text(if (locationSharingActive) "LIVE SHARING ON" else "LIVE SHARING OFF", style = MaterialTheme.typography.titleMedium)
                         Text(
                             when {
-                                !familyConsentEnabled -> "Family location consent is OFF. Enable it from your FamilyGuard family settings before starting."
+                                !familyConsentEnabled -> "Family location consent is OFF. Enable it from your PrinceCircle family settings before starting."
                                 locationSharingActive -> "Your location is being shared with your family. A persistent Android notification stays visible. Each session automatically ends after 10 minutes."
                                 else -> "Family consent is enabled. Turn on the switch to start a visible live-sharing session."
                             },
@@ -1140,15 +1398,17 @@ private fun FamilyGuardDashboard(
                         }
                     }
                 }
-                Card(modifier = Modifier.fillMaxWidth()) {
-                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                        Text("Permission Setup", style = MaterialTheme.typography.titleLarge)
-                        Text("Review each Android permission prompt. Location sharing remains off until family consent is enabled and you explicitly start sharing.")
-                        Text(permissionStatusText, style = MaterialTheme.typography.bodyMedium)
-                        Button(onClick = onSetupPermissions, modifier = Modifier.fillMaxWidth()) { Text("ONE-CLICK PERMISSION SETUP") }
+                if (!permissionSetupComplete) {
+                    Card(modifier = Modifier.fillMaxWidth()) {
+                        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                            Text("Permissions & Privacy", style = MaterialTheme.typography.titleLarge)
+                            Text("Grant each Android permission in sequence. Android will show its own prompt or Settings screen; location sharing stays off until you separately enable consent and start a session.")
+                            Text(permissionStatusText, style = MaterialTheme.typography.bodyMedium)
+                            Button(onClick = onSetupPermissions, modifier = Modifier.fillMaxWidth()) { Text("GRANT ALL PERMISSIONS") }
+                        }
                     }
                 }
-                Text("FamilyGuard location sharing is visible, consent-based and revocable. SOS and account settings are available from the menu.", style = MaterialTheme.typography.bodySmall)
+                Text("PrinceCircle location sharing is visible, consent-based and revocable. SOS and account settings are available from the menu.", style = MaterialTheme.typography.bodySmall)
             }
         }
     }
