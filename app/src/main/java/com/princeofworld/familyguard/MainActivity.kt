@@ -79,6 +79,7 @@ class MainActivity : ComponentActivity() {
     private var pendingDisclosure by mutableStateOf<String?>(null)
     private var permissionStatusText by mutableStateOf("Checking permissions…")
     private var usageAccessGranted by mutableStateOf(false)
+    private var permissionSetupComplete by mutableStateOf(false)
     private var showDeleteDataDialog by mutableStateOf(false)
     private var familyStatus by mutableStateOf("Sign in to FamilyGuard to create or join a family.")
     private var familyId by mutableStateOf("")
@@ -190,6 +191,7 @@ class MainActivity : ComponentActivity() {
                     usageText = usageText,
                     permissionStatusText = permissionStatusText,
                     usageAccessGranted = usageAccessGranted,
+                    permissionSetupComplete = permissionSetupComplete,
                     familyConsentEnabled = familyConsentEnabled,
                     onSetupPermissions = { beginPermissionSetup() },
                     onUsage = { openUsageAccessSettings() },
@@ -734,6 +736,7 @@ class MainActivity : ComponentActivity() {
             else -> "Pending: enable FamilyGuard in Usage Access settings"
         }
         usageAccessGranted = hasUsageAccess()
+        permissionSetupComplete = hasLocationPermission() && hasNotificationPermission() && (!premium || hasUsageAccess())
         permissionStatusText = "Location: $location\nNotifications: $notifications\nUsage Access: $usage\nBackground location permission: Not requested; sharing uses a user-started foreground service.\nBattery exemption: Not requested (not needed)"
     }
 
@@ -1025,6 +1028,7 @@ private fun FamilyGuardDashboard(
     usageText: String,
     permissionStatusText: String,
     usageAccessGranted: Boolean,
+    permissionSetupComplete: Boolean,
     familyConsentEnabled: Boolean,
     onSetupPermissions: () -> Unit,
     onUsage: () -> Unit,
@@ -1105,35 +1109,36 @@ private fun FamilyGuardDashboard(
                     Text("PrinceCircle", style = MaterialTheme.typography.headlineLarge)
                     TextButton(onClick = { scope.launch { drawerState.open() } }) { Text("☰ Menu") }
                 }
+                Text("Your family tools", style = MaterialTheme.typography.titleMedium)
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     Card(modifier = Modifier.weight(1f)) {
-                        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                             Text("SOS Alert", style = MaterialTheme.typography.titleMedium)
-                            Text("Emergency family alert", style = MaterialTheme.typography.bodySmall)
+                            Text("Send an emergency alert", style = MaterialTheme.typography.bodySmall)
                             Button(onClick = onSos, modifier = Modifier.fillMaxWidth()) { Text("OPEN") }
                         }
                     }
                     Card(modifier = Modifier.weight(1f)) {
-                        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                             Text("Family Dashboard", style = MaterialTheme.typography.titleMedium)
-                            Text("Manage your account", style = MaterialTheme.typography.bodySmall)
+                            Text("View family devices", style = MaterialTheme.typography.bodySmall)
                             Button(onClick = onOpenWebsite, modifier = Modifier.fillMaxWidth()) { Text("OPEN") }
                         }
                     }
                 }
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     Card(modifier = Modifier.weight(1f)) {
-                        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                             Text("Photo Gallery", style = MaterialTheme.typography.titleMedium)
-                            Text("Choose photos yourself", style = MaterialTheme.typography.bodySmall)
+                            Text("Select photos to share", style = MaterialTheme.typography.bodySmall)
                             OutlinedButton(onClick = onPickPhoto, modifier = Modifier.fillMaxWidth()) { Text("CHOOSE") }
                         }
                     }
                     Card(modifier = Modifier.weight(1f)) {
-                        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Text("Permissions", style = MaterialTheme.typography.titleMedium)
-                            Text("Review Android access", style = MaterialTheme.typography.bodySmall)
-                            OutlinedButton(onClick = onSetupPermissions, modifier = Modifier.fillMaxWidth()) { Text("REVIEW") }
+                        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text("Location", style = MaterialTheme.typography.titleMedium)
+                            Text(if (locationSharingActive) "Sharing is active" else "Sharing is off", style = MaterialTheme.typography.bodySmall)
+                            OutlinedButton(onClick = { if (locationSharingActive) onStopSharing() else onStartSharing() }, enabled = familyConsentEnabled || locationSharingActive, modifier = Modifier.fillMaxWidth()) { Text(if (locationSharingActive) "STOP" else "START") }
                         }
                     }
                 }
@@ -1215,12 +1220,14 @@ private fun FamilyGuardDashboard(
                         }
                     }
                 }
-                Card(modifier = Modifier.fillMaxWidth()) {
-                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                        Text("Permissions & Privacy", style = MaterialTheme.typography.titleLarge)
-                        Text("Review each Android permission prompt. Location sharing remains off until family consent is enabled and you explicitly start sharing.")
-                        Text(permissionStatusText, style = MaterialTheme.typography.bodyMedium)
-                        Button(onClick = onSetupPermissions, modifier = Modifier.fillMaxWidth()) { Text("GRANT ALL PERMISSIONS") }
+                if (!permissionSetupComplete) {
+                    Card(modifier = Modifier.fillMaxWidth()) {
+                        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                            Text("Permissions & Privacy", style = MaterialTheme.typography.titleLarge)
+                            Text("Grant each Android permission in sequence. Android will show its own prompt or Settings screen; location sharing stays off until you separately enable consent and start a session.")
+                            Text(permissionStatusText, style = MaterialTheme.typography.bodyMedium)
+                            Button(onClick = onSetupPermissions, modifier = Modifier.fillMaxWidth()) { Text("GRANT ALL PERMISSIONS") }
+                        }
                     }
                 }
                 Text("FamilyGuard location sharing is visible, consent-based and revocable. SOS and account settings are available from the menu.", style = MaterialTheme.typography.bodySmall)
