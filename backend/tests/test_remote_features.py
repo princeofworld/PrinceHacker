@@ -136,3 +136,73 @@ def test_webrtc_session_requires_explicit_consent_and_owned_device(api, monkeypa
         json={"deviceId": device_id, "consentAccepted": True},
     )
     assert wrong_owner.status_code == 404
+
+
+def test_webrtc_signaling_is_peer_scoped_and_ice_is_available_to_owner(api, monkeypatch):
+    main, client = api
+    _, _, owner_headers = register(client)
+    _, _, other_headers = register(client)
+    device_id = register_device(client, owner_headers)
+    monkeypatch.setenv("METERED_DOMAIN", "example.metered.test")
+    monkeypatch.setenv("METERED_SECRET_KEY", "test-secret-never-committed")
+
+    class FakeResponse:
+        def __init__(self, payload):
+            self.payload = payload
+        def __enter__(self):
+            return self
+        def __exit__(self, *args):
+            return False
+        def read(self, _limit):
+            import json
+            return json.dumps(self.payload).encode()
+
+    def fake_urlopen(request, timeout):
+        url = request.full_url
+        if "/turn/credential?" in url:
+            return FakeResponse({"apiKey": "temporary-test-key"})
+        return FakeResponse([{"urls": ["stun:stun.example.test:3478"]},
+                             {"urls": ["turn:turn.example.test:3478"], "username": "temp-user",
+                              "credential": "temp-password"}])
+
+    monkeypatch.setattr(main.urllib.request, "urlopen", fake_urlopen)
+    created = client.post("/api/webrtc/sessions", headers=owner_headers,
+                          json={"deviceId": device_id, "consentAccepted": True})
+    assert created.status_code == 200, created.text
+    session_id = created.json()["sessionId"]
+    assert created.json()["iceServers"]
+
+    listed = client.get("/api/webrtc/sessions", headers=owner_headers)
+    assert listed.status_code == 200
+    assert listed.json()["sessions"][0]["sessionId"] == session_id
+    assert listed.json()["sessions"][0]["iceServers"]
+
+    missing_sender = client.post(f"/api/webrtc/{session_id}/signals", headers=owner_headers,
+                                 json={"kind": "offer", "payload": {"type": "offer", "sdp": "v=0"}})
+    assert missing_sender.status_code == 400
+
+    offer = client.post(f"/api/webrtc/{session_id}/signals", headers=owner_headers,
+                        json={"kind": "offer", "senderId": "android-phone",
+                              "payload": {"type": "offer", "sdp": "v=0"}})
+    assert offer.status_code == 200
+    own = client.get(f"/api/webrtc/{session_id}/signals?sender_id=android-phone",
+                     headers=owner_headers)
+    assert own.status_code == 200
+    assert own.json()["signals"] == []
+    viewer = client.get(f"/api/webrtc/{session_id}/signals?sender_id=dashboard-browser",
+                        headers=owner_headers)
+    assert viewer.status_code == 200
+    assert viewer.json()["signals"][0]["kind"] == "offer"
+    assert viewer.json()["signals"][0]["signalId"]
+
+    answer = client.post(f"/api/webrtc/{session_id}/signals", headers=owner_headers,
+                         json={"kind": "answer", "senderId": "dashboard-browser",
+                               "payload": {"type": "answer", "sdp": "v=0"}})
+    assert answer.status_code == 200
+    received = client.get(f"/api/webrtc/{session_id}/signals?sender_id=android-phone",
+                          headers=owner_headers)
+    assert [signal["kind"] for signal in received.json()["signals"]] == ["answer"]
+
+    forbidden = client.get(f"/api/webrtc/{session_id}/signals?sender_id=intruder",
+                           headers=other_headers)
+    assert forbidden.status_code == 404
