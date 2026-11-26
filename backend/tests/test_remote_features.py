@@ -1,5 +1,25 @@
 """Consent, ownership, and delivery tests for remote safety and WebRTC APIs."""
+import importlib
+import os
+import sys
 import uuid
+from pathlib import Path
+
+import pytest
+from fastapi.testclient import TestClient
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
+
+@pytest.fixture
+def api(monkeypatch, tmp_path):
+    monkeypatch.setenv("DATABASE_URL", "")
+    monkeypatch.setenv("FAMILYGUARD_DB_PATH", str(tmp_path / "remote-features.sqlite3"))
+    monkeypatch.delenv("RENDER_DISK_PATH", raising=False)
+    import backend.main as main
+    main = importlib.reload(main)
+    with TestClient(main.app) as client:
+        yield main, client
 
 
 def register(client):
