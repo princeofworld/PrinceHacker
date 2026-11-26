@@ -61,35 +61,11 @@
   if(!devices.length)root.append(el("p","No registered devices yet.","muted"));
   else if(query&&!visible)root.append(el("p","No installed apps match your search.","muted"));
  }
- async function sos(){
-  const root=$("fg-sos-content");root.replaceChildren();const devices=await deviceData();let count=0;
-  for(const d of devices){
-   const data=await api("/api/devices/"+encodeURIComponent(d.deviceId)+"/sos");
-   for(const a of (data.alerts||[])){
-    count++;const card=el("article","", "border rounded-xl p-4 mb-3 "+(a.status==="active"?"border-red-500 bg-red-950/40":"border-slate-700"));
-    card.append(el("h3",(a.status==="active"?"ACTIVE SOS":"RESOLVED SOS")+" · "+a.message,"font-semibold"));
-    card.append(el("p",d.deviceName+" · Captured "+stamp(a.capturedAt)+" · Received "+stamp(a.createdAt),"muted text-xs mt-2"));
-    if(a.status==="active"){
-     const btn=el("button","Mark resolved","btn secondary mt-3");btn.type="button";
-     btn.addEventListener("click",async()=>{btn.disabled=true;try{await api("/api/devices/"+encodeURIComponent(d.deviceId)+"/sos/"+encodeURIComponent(a.alertId)+"/resolve",{method:"POST"});await sos();}catch(e){btn.disabled=false;alert(e.message);}});
-     card.append(btn);
-    }
-    root.append(card);
-   }
-  }
-  if(!count)root.append(el("p","No SOS alerts.","muted"));
- }
- async function familyManagement(){
-  const root=$("family-list");if(!root)return;
-  const data=await api("/family/mine");
-  if(!data.families?.length)root.textContent="No family groups yet.";
- }
- const actions={"overview":overview,"location-history":locations,"installed-apps":apps,"sos-alerts":sos,"family-management":familyManagement,"premium":async()=>{const b=await api("/billing/status");$("premium-state").textContent=b.plan==="premium"?"Premium active":(b.plan||b.status||"Free");$("premium-detail").textContent="Premium subscription: ₹999/month";}};
- async function load(name){try{if(actions[name])await actions[name]();}catch(e){const target={"overview":"fg-overview-account","location-history":"fg-location-content","installed-apps":"fg-app-content","sos-alerts":"fg-sos-content","family-management":"family-message","premium":"premium-detail"}[name];if(target&&$(target))$(target).textContent="Could not load: "+e.message;}}
+  const actions={"overview":overview,"location-history":locations,"installed-apps":apps,"premium":async()=>{const b=await api("/billing/status");$("premium-state").textContent=b.plan==="premium"?"Premium active":(b.plan||b.status||"Free");$("premium-detail").textContent="Premium subscription: ₹999/month";}};
+ async function load(name){try{if(actions[name])await actions[name]();}catch(e){const target={"overview":"fg-overview-account","location-history":"fg-location-content","installed-apps":"fg-app-content","premium":"premium-detail"}[name];if(target&&$(target))$(target).textContent="Could not load: "+e.message;}}
  document.addEventListener("click",event=>{const btn=event.target.closest("[data-tab]");if(!btn)return;const name=btn.dataset.tab;if(actions[name])load(name);},{capture:true});
  $("fg-refresh-locations")?.addEventListener("click",()=>load("location-history"));
  $("fg-refresh-apps")?.addEventListener("click",()=>load("installed-apps"));
  $("fg-app-search")?.addEventListener("input",()=>load("installed-apps"));
- $("fg-refresh-sos")?.addEventListener("click",()=>load("sos-alerts"));
  if(token())load("overview");
 })();
