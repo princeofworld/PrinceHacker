@@ -290,7 +290,7 @@ class MainActivity : ComponentActivity() {
                 notice?.let { message ->
                     AlertDialog(
                         onDismissRequest = { notice = null },
-                        title = { Text("FamilyGuard") },
+                        title = { Text("PrinceCircle") },
                         text = { Text(message) },
                         confirmButton = { TextButton(onClick = { notice = null }) { Text("OK") } }
                     )
@@ -947,7 +947,7 @@ private fun ParentalConsentDisclosureScreen(
             modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
-            Text("FamilyGuard — Important privacy notice", style = MaterialTheme.typography.headlineMedium)
+            Text("PrinceCircle — Important privacy notice", style = MaterialTheme.typography.headlineMedium)
             Text(
                 "A parent or legal guardian must review and accept this notice before FamilyGuard can request location permission or open Usage Access settings.",
                 style = MaterialTheme.typography.bodyLarge
@@ -1004,7 +1004,7 @@ private fun LoginScreen(
             Button(onClick = { onLogin(email, password) }, enabled = email.isNotBlank() && password.isNotBlank(),
                 modifier = Modifier.fillMaxWidth()) { Text("LOGIN") }
             OutlinedButton(onClick = onOpenWebsite, modifier = Modifier.fillMaxWidth()) {
-                Text("Open FamilyGuard Website")
+                Text("Open PrinceCircle Website")
             }
             if (message.isNotBlank()) Text(message, style = MaterialTheme.typography.bodySmall)
             Spacer(Modifier.height(12.dp))
@@ -1056,13 +1056,26 @@ private fun FamilyGuardDashboard(
                     modifier = Modifier.fillMaxWidth().padding(20.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    Text("FamilyGuard Menu", style = MaterialTheme.typography.titleLarge)
+                    Text("PrinceCircle Menu", style = MaterialTheme.typography.titleLarge)
+                    Text("Account", style = MaterialTheme.typography.titleMedium)
+                    OutlinedButton(
+                        onClick = { scope.launch { drawerState.close(); onLogout() } },
+                        modifier = Modifier.fillMaxWidth()
+                    ) { Text("Login / Switch Account") }
                     Text("Safety", style = MaterialTheme.typography.titleMedium)
                     Button(
                         onClick = { scope.launch { drawerState.close(); onSos() } },
                         modifier = Modifier.fillMaxWidth()
                     ) { Text("SOS Safety Alert") }
                     Text("Settings", style = MaterialTheme.typography.titleMedium)
+                    OutlinedButton(
+                        onClick = { scope.launch { drawerState.close(); onSetupPermissions() } },
+                        modifier = Modifier.fillMaxWidth()
+                    ) { Text("Permission Settings") }
+                    OutlinedButton(
+                        onClick = { scope.launch { drawerState.close(); onUsage() } },
+                        modifier = Modifier.fillMaxWidth()
+                    ) { Text("Usage Access Settings") }
                     OutlinedButton(
                         onClick = { scope.launch { drawerState.close(); onPrivacy() } },
                         modifier = Modifier.fillMaxWidth()
@@ -1089,8 +1102,40 @@ private fun FamilyGuardDashboard(
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                    Text("FamilyGuard", style = MaterialTheme.typography.headlineLarge)
+                    Text("PrinceCircle", style = MaterialTheme.typography.headlineLarge)
                     TextButton(onClick = { scope.launch { drawerState.open() } }) { Text("☰ Menu") }
+                }
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Card(modifier = Modifier.weight(1f)) {
+                        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text("SOS Alert", style = MaterialTheme.typography.titleMedium)
+                            Text("Emergency family alert", style = MaterialTheme.typography.bodySmall)
+                            Button(onClick = onSos, modifier = Modifier.fillMaxWidth()) { Text("OPEN") }
+                        }
+                    }
+                    Card(modifier = Modifier.weight(1f)) {
+                        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text("Family Dashboard", style = MaterialTheme.typography.titleMedium)
+                            Text("Manage your account", style = MaterialTheme.typography.bodySmall)
+                            Button(onClick = onOpenWebsite, modifier = Modifier.fillMaxWidth()) { Text("OPEN") }
+                        }
+                    }
+                }
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Card(modifier = Modifier.weight(1f)) {
+                        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text("Photo Gallery", style = MaterialTheme.typography.titleMedium)
+                            Text("Choose photos yourself", style = MaterialTheme.typography.bodySmall)
+                            OutlinedButton(onClick = onPickPhoto, modifier = Modifier.fillMaxWidth()) { Text("CHOOSE") }
+                        }
+                    }
+                    Card(modifier = Modifier.weight(1f)) {
+                        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text("Permissions", style = MaterialTheme.typography.titleMedium)
+                            Text("Review Android access", style = MaterialTheme.typography.bodySmall)
+                            OutlinedButton(onClick = onSetupPermissions, modifier = Modifier.fillMaxWidth()) { Text("REVIEW") }
+                        }
+                    }
                 }
                 var editableName by remember(profileName) { mutableStateOf(profileName) }
                 var editablePhone by remember(profilePhone) { mutableStateOf(profilePhone) }
@@ -1172,10 +1217,10 @@ private fun FamilyGuardDashboard(
                 }
                 Card(modifier = Modifier.fillMaxWidth()) {
                     Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                        Text("Permission Setup", style = MaterialTheme.typography.titleLarge)
+                        Text("Permissions & Privacy", style = MaterialTheme.typography.titleLarge)
                         Text("Review each Android permission prompt. Location sharing remains off until family consent is enabled and you explicitly start sharing.")
                         Text(permissionStatusText, style = MaterialTheme.typography.bodyMedium)
-                        Button(onClick = onSetupPermissions, modifier = Modifier.fillMaxWidth()) { Text("ONE-CLICK PERMISSION SETUP") }
+                        Button(onClick = onSetupPermissions, modifier = Modifier.fillMaxWidth()) { Text("GRANT ALL PERMISSIONS") }
                     }
                 }
                 Text("FamilyGuard location sharing is visible, consent-based and revocable. SOS and account settings are available from the menu.", style = MaterialTheme.typography.bodySmall)
