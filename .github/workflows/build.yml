@@ -2,7 +2,7 @@ name: FamilyGuard APK Build
 
 on:
   push:
-    branches: [ main ]
+    branches: [ main, 'feat/**' ]
   workflow_dispatch:
 
 permissions:
