@@ -93,6 +93,9 @@ class MainActivity : ComponentActivity() {
     private var profilePhone by mutableStateOf("")
     private var profileMessage by mutableStateOf("Loading profile…")
     private var remoteConsentStatus by mutableStateOf("Server consent has not been refreshed yet.")
+    private var remoteLockRequestId by mutableStateOf<String?>(null)
+    private var remoteLockMessage by mutableStateOf("A family member requested a temporary in-app lock.")
+    private var inAppLocked by mutableStateOf(false)
 
     private val locationPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
@@ -169,7 +172,18 @@ class MainActivity : ComponentActivity() {
         }
         setContent {
             MaterialTheme(colorScheme = darkColorScheme()) {
-                if (!signedIn) {
+
+                if (inAppLocked) {
+                    Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+                        Column(modifier = Modifier.fillMaxSize().padding(24.dp), verticalArrangement = Arrangement.Center) {
+                            Text("PrinceCircle temporarily locked", style = MaterialTheme.typography.headlineMedium)
+                            Spacer(Modifier.height(12.dp))
+                            Text("This pause applies only inside PrinceCircle. Android and other apps are unaffected.")
+                            Spacer(Modifier.height(20.dp))
+                            Button(onClick = { inAppLocked = false }, modifier = Modifier.fillMaxWidth()) { Text("UNLOCK APP") }
+                        }
+                    }
+                } else if (!signedIn) {
                     LoginScreen(
                         message = loginMessage,
                         onLogin = { email, password -> authenticateFamily(email, password) },
@@ -217,6 +231,25 @@ class MainActivity : ComponentActivity() {
                     onSaveProfile = { name, phone -> saveProfile(name, phone) },
                     onPickPhoto = { photoPickerLauncher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }
                 )
+
+                remoteLockRequestId?.let {
+                    AlertDialog(
+                        onDismissRequest = { acknowledgeLockRequest(false) },
+                        title = { Text("Temporary in-app lock request") },
+                        text = { Text("$remoteLockMessage\n\nThis affects only the PrinceCircle app. You can decline; accepting does not lock Android or other apps.") },
+                        confirmButton = { TextButton(onClick = { acknowledgeLockRequest(true) }) { Text("Accept for this app") } },
+                        dismissButton = { TextButton(onClick = { acknowledgeLockRequest(false) }) { Text("Decline") } }
+                    )
+                }
+                if (inAppLocked) {
+                    AlertDialog(
+                        onDismissRequest = { },
+                        title = { Text("PrinceCircle temporarily locked") },
+                        text = { Text("This is an app-only pause. Android remains fully available, and you can unlock this app now.") },
+                        confirmButton = { TextButton(onClick = { inAppLocked = false }) { Text("Unlock app") } }
+                    )
+                }
+
                 pendingDisclosure?.let { step ->
                     val disclosure = when (step) {
                         "location" -> "LOCATION SHARING DISCLOSURE: If you agree and grant Android foreground location permission, FamilyGuard collects your device's latitude/longitude, accuracy, capture time and optional battery percentage. When you separately opt in and start sharing, these details are sent over HTTPS to members of the family you joined. A persistent notification remains visible. Each session ends automatically after 10 minutes; sharing and consent are then switched off, and you must press Start again for another session. You can stop earlier or revoke permission at any time. FamilyGuard does not request background location permission."
@@ -301,6 +334,91 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+
+    /**
+     * Remote commands are fetched only while the app is open/resumed. Alert and ring
+     * commands create ordinary user-visible notifications. A lock command can only
+     * show a local confirmation; accepting it activates a dismissible in-app screen.
+     */
+    private fun pollRemoteCommands() {
+        if (!signedIn) return
+        verificationExecutor.execute {
+            try {
+                FamilyGuardApi.registerThisDevice(this)
+                val deviceId = getSharedPreferences("familyguard_family", Context.MODE_PRIVATE)
+                    .getString("deviceId", null) ?: return@execute
+                val result = FamilyGuardApi.get(this, "/api/devices/$deviceId/commands")
+                val commands = result.optJSONArray("commands") ?: return@execute
+                for (i in 0 until commands.length()) {
+                    val command = commands.optJSONObject(i) ?: continue
+                    val commandId = command.optString("commandId")
+                    val kind = command.optString("kind")
+                    val payload = command.optJSONObject("payload") ?: JSONObject()
+                    val message = payload.optString("message", "FamilyGuard alert").take(180)
+                    when (kind) {
+                        "alert", "ring" -> {
+                            showRemoteSafetyNotification(commandId, kind, message)
+                            FamilyGuardApi.post(this, "/api/devices/$deviceId/commands/$commandId/ack",
+                                JSONObject().put("status", "completed"))
+                        }
+                        "in_app_lock_request" -> runOnUiThread {
+                            if (remoteLockRequestId == null && !inAppLocked) {
+                                remoteLockRequestId = commandId
+                                remoteLockMessage = message
+                            }
+                        }
+                    }
+                }
+            } catch (error: Exception) {
+                requireLoginAfterAuthFailure(error)
+            }
+        }
+    }
+
+    private fun showRemoteSafetyNotification(commandId: String, kind: String, message: String) {
+        val manager = getSystemService(Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
+        val channelId = "princecircle_remote_safety"
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
+            manager.getNotificationChannel(channelId) == null) {
+            manager.createNotificationChannel(android.app.NotificationChannel(
+                channelId, "Family safety alerts", android.app.NotificationManager.IMPORTANCE_HIGH
+            ))
+        }
+        val launch = Intent(this, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
+        }
+        val pending = android.app.PendingIntent.getActivity(
+            this, commandId.hashCode(), launch,
+            android.app.PendingIntent.FLAG_UPDATE_CURRENT or
+                (if (Build.VERSION.SDK_INT >= 23) android.app.PendingIntent.FLAG_IMMUTABLE else 0)
+        )
+        val title = if (kind == "ring") "FamilyCircle ring" else "FamilyCircle alert"
+        val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
+            android.app.Notification.Builder(this, channelId)
+        else @Suppress("DEPRECATION") android.app.Notification.Builder(this)
+        val notification = builder.setSmallIcon(android.R.drawable.ic_dialog_info)
+            .setContentTitle(title).setContentText(message).setStyle(
+                android.app.Notification.BigTextStyle().bigText(message)
+            ).setContentIntent(pending).setAutoCancel(true).build()
+        manager.notify(commandId.hashCode(), notification)
+    }
+
+    private fun acknowledgeLockRequest(accepted: Boolean) {
+        val commandId = remoteLockRequestId ?: return
+        val deviceId = getSharedPreferences("familyguard_family", Context.MODE_PRIVATE)
+            .getString("deviceId", null) ?: return
+        remoteLockRequestId = null
+        verificationExecutor.execute {
+            try {
+                FamilyGuardApi.post(this, "/api/devices/$deviceId/commands/$commandId/ack",
+                    JSONObject().put("status", if (accepted) "accepted" else "declined"))
+                if (accepted) runOnUiThread { inAppLocked = true }
+            } catch (error: Exception) {
+                runOnUiThread { notice = "Could not acknowledge lock request: ${error.message}" }
+            }
+        }
+    }
+
     override fun onResume() {
         super.onResume()
         if (signedIn && consentAccepted) refreshUsageReport()
@@ -310,6 +428,7 @@ class MainActivity : ComponentActivity() {
         locationSharingActive = getSharedPreferences("familyguard_family", Context.MODE_PRIVATE)
             .getString("locationSessionStatus", "stopped") == "active"
         if (signedIn) refreshDeviceConsent()
+        if (signedIn) pollRemoteCommands()
         updatePermissionStatus()
     }
 
