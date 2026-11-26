@@ -1222,7 +1222,9 @@ def create_webrtc_session(payload:dict,uid:str=Depends(current_uid)):
     domain=os.getenv("METERED_DOMAIN","").strip().removeprefix("https://").removeprefix("http://").strip("/")
     secret_key=os.getenv("METERED_SECRET_KEY","").strip()
     if not domain or not secret_key: raise HTTPException(503,"Live sharing is not configured.")
-    with db() as c: _owned_device(c,uid,device_id)
+    with db() as c:
+        _owned_device(c,uid,device_id)
+        enforce_rate_limit(c,"webrtc:create:"+uid+":"+device_id,10)
     endpoint="https://"+domain+"/api/v1/turn/credential?secretKey="+quote(secret_key,safe="")
     body=json.dumps({"expiryInSeconds":3600,"label":"familyguard-"+secrets.token_hex(6)}).encode()
     req=urllib.request.Request(endpoint,data=body,headers={"Content-Type":"application/json","Accept":"application/json"},method="POST")
@@ -1245,6 +1247,7 @@ def post_webrtc_signal(session_id:str,payload:dict,uid:str=Depends(current_uid))
     with db() as c:
         s=c.execute("SELECT uid,expires,status FROM webrtc_sessions WHERE id=?",(session_id,)).fetchone()
         if not s or s["uid"]!=uid or s["expires"]<time.time() or s["status"]!="active": raise HTTPException(404,"Active session not found.")
+        enforce_rate_limit(c,"webrtc:signal:"+uid+":"+session_id,120)
         c.execute("INSERT INTO webrtc_signals(id,session_id,uid,kind,payload,created) VALUES(?,?,?,?,?,?)",(secrets.token_urlsafe(16),session_id,uid,kind,json.dumps(data,separators=(",",":")),time.time()))
         if kind=="end": c.execute("UPDATE webrtc_sessions SET status='ended' WHERE id=?",(session_id,))
     return {"accepted":True}
@@ -1266,6 +1269,7 @@ def enqueue_remote_command(device_id:str,payload:dict,uid:str=Depends(current_ui
     now=time.time(); cid=secrets.token_urlsafe(18); expires=now+min(300,max(30,int(payload.get("ttlSeconds",120))))
     with db() as c:
         _owned_device(c,uid,device_id)
+        enforce_rate_limit(c,"remote-command:"+uid+":"+device_id,30)
         c.execute("INSERT INTO remote_commands(id,uid,device_id,kind,payload,status,created,expires) VALUES(?,?,?,?,?,'pending',?,?)",(cid,uid,device_id,kind,json.dumps({"message":message,"requiresLocalAcceptance":kind=="in_app_lock_request"}),now,expires))
     return {"commandId":cid,"status":"pending","expiresAt":expires,"note":"Android OS restrictions are not changed; an in-app lock request requires acceptance on the device."}
 
