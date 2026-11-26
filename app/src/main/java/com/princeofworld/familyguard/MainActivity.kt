@@ -32,6 +32,10 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalDrawerSheet
+import androidx.compose.material3.ModalNavigationDrawer
+import androidx.compose.material3.rememberDrawerState
+import androidx.compose.material3.DrawerValue
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
@@ -44,6 +48,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.rememberCoroutineScope
+import kotlinx.coroutines.launch
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
@@ -67,6 +73,7 @@ class MainActivity : ComponentActivity() {
     private var notice by mutableStateOf<String?>(null)
     private var pendingDisclosure by mutableStateOf<String?>(null)
     private var permissionStatusText by mutableStateOf("Checking permissions…")
+    private var usageAccessGranted by mutableStateOf(false)
     private var showDeleteDataDialog by mutableStateOf(false)
     private var familyStatus by mutableStateOf("Sign in to FamilyGuard to create or join a family.")
     private var familyId by mutableStateOf("")
@@ -164,6 +171,8 @@ class MainActivity : ComponentActivity() {
                     billingMessage = billingMessage,
                     usageText = usageText,
                     permissionStatusText = permissionStatusText,
+                    usageAccessGranted = usageAccessGranted,
+                    familyConsentEnabled = familyConsentEnabled,
                     onSetupPermissions = { beginPermissionSetup() },
                     onUsage = { openUsageAccessSettings() },
                     onSos = { sendSosAlert() },
@@ -603,6 +612,10 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun startFamilyLocationSharing() {
+        if (!familyConsentEnabled) {
+            notice = "Location sharing is not enabled by your family consent settings. Enable consent on the FamilyGuard website first."
+            return
+        }
         if (!hasLocationPermission()) {
             notice = "Grant foreground location permission first, then try again."
             return
@@ -627,7 +640,7 @@ class MainActivity : ComponentActivity() {
             if (Build.VERSION.SDK_INT >= 26) startForegroundService(intent) else startService(intent)
             locationSharingActive = true
             getSharedPreferences("familyguard_family", MODE_PRIVATE).edit().putString("locationSessionStatus", "active").apply()
-            "Live sharing is on for up to 10 minutes. Android displays a persistent notification."
+            "Live sharing started. Android displays a persistent notification; this session automatically ends after 10 minutes."
         }
     }
 
@@ -701,6 +714,7 @@ class MainActivity : ComponentActivity() {
             Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && !restrictedHelpShown -> "Action needed: review Android Restricted Settings"
             else -> "Pending: enable FamilyGuard in Usage Access settings"
         }
+        usageAccessGranted = hasUsageAccess()
         permissionStatusText = "Location: $location\nNotifications: $notifications\nUsage Access: $usage\nBackground location permission: Not requested; sharing uses a user-started foreground service.\nBattery exemption: Not requested (not needed)"
     }
 
@@ -988,6 +1002,8 @@ private fun FamilyGuardDashboard(
     billingMessage: String,
     usageText: String,
     permissionStatusText: String,
+    usageAccessGranted: Boolean,
+    familyConsentEnabled: Boolean,
     onSetupPermissions: () -> Unit,
     onUsage: () -> Unit,
     onSos: () -> Unit,
@@ -1007,105 +1023,133 @@ private fun FamilyGuardDashboard(
     onRefreshConsent: () -> Unit,
     onSaveProfile: (String, String) -> Unit
 ) {
-    Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-        Column(modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp)) {
-            Text("FamilyGuard", style = MaterialTheme.typography.headlineLarge)
-            var editableName by remember(profileName) { mutableStateOf(profileName) }
-            var editablePhone by remember(profilePhone) { mutableStateOf(profilePhone) }
-            Card(modifier = Modifier.fillMaxWidth()) {
-                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("Profile", style = MaterialTheme.typography.titleLarge)
-                    OutlinedTextField(editableName, { editableName = it }, label = { Text("Name") }, modifier = Modifier.fillMaxWidth())
-                    OutlinedTextField(editablePhone, { editablePhone = it }, label = { Text("Contact phone") }, modifier = Modifier.fillMaxWidth())
-                    Text(profileMessage, style = MaterialTheme.typography.bodySmall)
-                    Button(onClick = { onSaveProfile(editableName, editablePhone) }, modifier = Modifier.fillMaxWidth()) { Text("SAVE PROFILE") }
+    val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
+    val scope = rememberCoroutineScope()
+    ModalNavigationDrawer(
+        drawerState = drawerState,
+        drawerContent = {
+            ModalDrawerSheet {
+                Column(
+                    modifier = Modifier.fillMaxWidth().padding(20.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Text("FamilyGuard Menu", style = MaterialTheme.typography.titleLarge)
+                    Text("Safety", style = MaterialTheme.typography.titleMedium)
+                    Button(
+                        onClick = { scope.launch { drawerState.close(); onSos() } },
+                        modifier = Modifier.fillMaxWidth()
+                    ) { Text("SOS Safety Alert") }
+                    Text("Settings", style = MaterialTheme.typography.titleMedium)
+                    OutlinedButton(
+                        onClick = { scope.launch { drawerState.close(); onPrivacy() } },
+                        modifier = Modifier.fillMaxWidth()
+                    ) { Text("Privacy Policy") }
+                    OutlinedButton(
+                        onClick = { scope.launch { drawerState.close(); onTerms() } },
+                        modifier = Modifier.fillMaxWidth()
+                    ) { Text("Terms of Service") }
+                    OutlinedButton(
+                        onClick = { scope.launch { drawerState.close(); onDeleteAccount() } },
+                        modifier = Modifier.fillMaxWidth()
+                    ) { Text("Delete account and data") }
+                    OutlinedButton(
+                        onClick = { scope.launch { drawerState.close(); onLogout() } },
+                        modifier = Modifier.fillMaxWidth()
+                    ) { Text("Log out") }
                 }
             }
-            Card(modifier = Modifier.fillMaxWidth(),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)) {
-                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(if (premium) "PREMIUM ACTIVE" else "ACCOUNT SIGNED IN", style = MaterialTheme.typography.titleLarge)
-                    Text(billingMessage, style = MaterialTheme.typography.bodyMedium)
-                    Text("Manage Premium, family members and settings on the official website.",
-                        style = MaterialTheme.typography.bodySmall)
-                    Button(onClick = onOpenWebsite, modifier = Modifier.fillMaxWidth()) {
-                        Text("Open Website Dashboard")
+        }
+    ) {
+        Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+            Column(
+                modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text("FamilyGuard", style = MaterialTheme.typography.headlineLarge)
+                    TextButton(onClick = { scope.launch { drawerState.open() } }) { Text("☰ Menu") }
+                }
+                var editableName by remember(profileName) { mutableStateOf(profileName) }
+                var editablePhone by remember(profilePhone) { mutableStateOf(profilePhone) }
+                Card(modifier = Modifier.fillMaxWidth()) {
+                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("Profile", style = MaterialTheme.typography.titleLarge)
+                        OutlinedTextField(editableName, { editableName = it }, label = { Text("Name") }, modifier = Modifier.fillMaxWidth())
+                        OutlinedTextField(editablePhone, { editablePhone = it }, label = { Text("Contact phone") }, modifier = Modifier.fillMaxWidth())
+                        Text(profileMessage, style = MaterialTheme.typography.bodySmall)
+                        Button(onClick = { onSaveProfile(editableName, editablePhone) }, modifier = Modifier.fillMaxWidth()) { Text("SAVE PROFILE") }
                     }
                 }
-            }
-            Card(modifier = Modifier.fillMaxWidth()) {
-                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Text("10-minute Location Sharing", style = MaterialTheme.typography.titleLarge)
-                    Text(familyStatus, style = MaterialTheme.typography.bodyMedium)
-                    Text(if (locationSharingActive) "Session active. It will stop automatically at 10 minutes." else "No active session. Starting requires your explicit action.", style = MaterialTheme.typography.bodySmall)
-                    Button(onClick = onStartSharing, enabled = !locationSharingActive, modifier = Modifier.fillMaxWidth()) {
-                        Text("START 10-MINUTE SESSION")
-                    }
-                    OutlinedButton(onClick = onStopSharing, enabled = locationSharingActive, modifier = Modifier.fillMaxWidth()) {
-                        Text("STOP SHARING NOW")
+                Card(modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)) {
+                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(if (premium) "PREMIUM ACTIVE" else "ACCOUNT SIGNED IN", style = MaterialTheme.typography.titleLarge)
+                        Text(billingMessage, style = MaterialTheme.typography.bodyMedium)
+                        Text(familyStatus, style = MaterialTheme.typography.bodySmall)
+                        Button(onClick = onOpenWebsite, modifier = Modifier.fillMaxWidth()) { Text("Open Website Dashboard") }
                     }
                 }
-            }
-            Card(modifier = Modifier.fillMaxWidth()) {
-                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Text("Device Summary Sync — Optional Consent", style = MaterialTheme.typography.titleLarge)
-                    Text("Each category is independent and OFF by default. When ON, only app labels and total screen-time minutes, or today's total call count, total call duration and total contacts count are uploaded. No phone numbers, call details, contact names or contact contents are uploaded. Turning either switch OFF immediately cancels pending summary work for that category and blocks it at the API upload boundary. Android permissions can also be revoked in Settings.")
-                    Text(remoteConsentStatus, style = MaterialTheme.typography.bodySmall)
-                    Button(onClick = onRefreshConsent, modifier = Modifier.fillMaxWidth()) { Text("REFRESH SERVER CONSENT & SYNC") }
-                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                        Column(Modifier.weight(1f)) {
-                            Text("Installed Apps & Screen Time Sync")
-                            Text("Uploads launchable app names and today's total usage minutes.", style = MaterialTheme.typography.bodySmall)
+                Card(modifier = Modifier.fillMaxWidth()) {
+                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Text("Location Sharing", style = MaterialTheme.typography.titleLarge)
+                        Text(if (locationSharingActive) "LIVE SHARING ON" else "LIVE SHARING OFF", style = MaterialTheme.typography.titleMedium)
+                        Text(
+                            when {
+                                !familyConsentEnabled -> "Family location consent is OFF. Enable it from your FamilyGuard family settings before starting."
+                                locationSharingActive -> "Your location is being shared with your family. A persistent Android notification stays visible. Each session automatically ends after 10 minutes."
+                                else -> "Family consent is enabled. Turn on the switch to start a visible live-sharing session."
+                            },
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            Text(if (locationSharingActive) "Stop Live Sharing" else "Start Live Sharing")
+                            Switch(
+                                checked = locationSharingActive,
+                                onCheckedChange = { enabled -> if (enabled) onStartSharing() else onStopSharing() },
+                                enabled = familyConsentEnabled || locationSharingActive
+                            )
                         }
-                        Switch(checked = installedAppsSync, onCheckedChange = onInstalledAppsSyncChanged)
+                        Text(familyStatus, style = MaterialTheme.typography.bodySmall)
                     }
-                    Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                        Column(Modifier.weight(1f)) {
-                            Text("Today's Calls & Contacts Summary Sync")
-                            Text("Uploads today's call count, total duration and contacts count only.", style = MaterialTheme.typography.bodySmall)
+                }
+                Card(modifier = Modifier.fillMaxWidth()) {
+                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Text("App Usage & Device Summary", style = MaterialTheme.typography.titleLarge)
+                        Text("Optional data categories are controlled independently. Only enabled summaries and currently granted permissions are synced.", style = MaterialTheme.typography.bodySmall)
+                        Text(remoteConsentStatus, style = MaterialTheme.typography.bodySmall)
+                        Button(onClick = onRefreshConsent, modifier = Modifier.fillMaxWidth()) { Text("REFRESH SERVER CONSENT & SYNC") }
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            Column(Modifier.weight(1f)) {
+                                Text("Installed Apps & Screen Time Sync")
+                                Text("Uploads launchable app names and today's total usage minutes.", style = MaterialTheme.typography.bodySmall)
+                            }
+                            Switch(checked = installedAppsSync, onCheckedChange = onInstalledAppsSyncChanged)
                         }
-                        Switch(checked = callsContactsSync, onCheckedChange = onCallsContactsSyncChanged)
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            Column(Modifier.weight(1f)) {
+                                Text("Today's Calls & Contacts Summary Sync")
+                                Text("Uploads today's call count, total duration and contacts count only.", style = MaterialTheme.typography.bodySmall)
+                            }
+                            Switch(checked = callsContactsSync, onCheckedChange = onCallsContactsSyncChanged)
+                        }
+                        if (premium) {
+                            Text("App Usage & Screen Time", style = MaterialTheme.typography.titleMedium)
+                            Text(usageText, style = MaterialTheme.typography.bodyMedium)
+                            if (!usageAccessGranted) {
+                                OutlinedButton(onClick = onUsage, modifier = Modifier.fillMaxWidth()) { Text("Open Usage Access Settings") }
+                            }
+                        }
                     }
                 }
-            }
-            Card(modifier = Modifier.fillMaxWidth()) {
-                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Text("Permission Setup", style = MaterialTheme.typography.titleLarge)
-                    Text("Review each Android permission prompt. Location sharing remains off until you explicitly enable it from the website and consent on this device.")
-                    Text(permissionStatusText, style = MaterialTheme.typography.bodyMedium)
-                    Button(onClick = onSetupPermissions, modifier = Modifier.fillMaxWidth()) {
-                        Text("ONE-CLICK PERMISSION SETUP")
+                Card(modifier = Modifier.fillMaxWidth()) {
+                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Text("Permission Setup", style = MaterialTheme.typography.titleLarge)
+                        Text("Review each Android permission prompt. Location sharing remains off until family consent is enabled and you explicitly start sharing.")
+                        Text(permissionStatusText, style = MaterialTheme.typography.bodyMedium)
+                        Button(onClick = onSetupPermissions, modifier = Modifier.fillMaxWidth()) { Text("ONE-CLICK PERMISSION SETUP") }
                     }
                 }
+                Text("FamilyGuard location sharing is visible, consent-based and revocable. SOS and account settings are available from the menu.", style = MaterialTheme.typography.bodySmall)
             }
-            if (premium) Card(modifier = Modifier.fillMaxWidth()) {
-                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("App Usage & Screen Time", style = MaterialTheme.typography.titleLarge)
-                    Text(usageText, style = MaterialTheme.typography.bodyMedium)
-                    OutlinedButton(onClick = onUsage, modifier = Modifier.fillMaxWidth()) {
-                        Text("Open Usage Access Settings")
-                    }
-                }
-            }
-            Card(modifier = Modifier.fillMaxWidth()) {
-                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("SOS Safety Alert", style = MaterialTheme.typography.titleLarge)
-                    Text("Prepare a message in your SMS app. Review and send it yourself.")
-                    Button(onClick = onSos, modifier = Modifier.fillMaxWidth()) { Text("PREPARE SOS MESSAGE") }
-                }
-            }
-            Card(modifier = Modifier.fillMaxWidth()) {
-                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text("Settings", style = MaterialTheme.typography.titleLarge)
-                    OutlinedButton(onClick = onPrivacy, modifier = Modifier.fillMaxWidth()) { Text("Privacy Policy") }
-                    OutlinedButton(onClick = onTerms, modifier = Modifier.fillMaxWidth()) { Text("Terms of Service") }
-                    OutlinedButton(onClick = onDeleteAccount, modifier = Modifier.fillMaxWidth()) { Text("Delete account and data") }
-                    OutlinedButton(onClick = onLogout, modifier = Modifier.fillMaxWidth()) { Text("Log out") }
-                }
-            }
-            Text("FamilyGuard does not hide monitoring. Location sharing is optional, visible and revocable.",
-                style = MaterialTheme.typography.bodySmall)
         }
     }
 }
