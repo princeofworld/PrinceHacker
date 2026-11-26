@@ -444,7 +444,14 @@ def refresh_auth(payload:RefreshIn):
     replacement=secrets.token_urlsafe(48)
     replacement_hash=hashlib.sha256(replacement.encode()).hexdigest()
     with db() as c:
-        row=c.execute("SELECT uid,expires FROM refresh_sessions WHERE token_hash=?",(digest,)).fetchone()
+        # Serialize consumption of this one-time refresh token across API workers.
+        # SQLite obtains its writer reservation before reading; PostgreSQL locks
+        # the matching row until this transaction commits or rolls back.
+        if c.is_postgres:
+            row=c.execute("SELECT uid,expires FROM refresh_sessions WHERE token_hash=? FOR UPDATE",(digest,)).fetchone()
+        else:
+            c.execute("BEGIN IMMEDIATE")
+            row=c.execute("SELECT uid,expires FROM refresh_sessions WHERE token_hash=?",(digest,)).fetchone()
         if not row:
             raise HTTPException(401,"Refresh session is invalid. Please sign in again.")
         if row["expires"]<=now:

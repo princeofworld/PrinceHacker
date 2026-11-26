@@ -177,13 +177,38 @@ object FamilyGuardApi {
             .apply()
     }
 
+    private val refreshTokenLock = Any()
+
     private fun rotateRefreshToken(context: Context): String {
         val prefs = context.getSharedPreferences("familyguard_family", Context.MODE_PRIVATE)
-        val refresh = prefs.getString("refreshToken", null)
-            ?: throw IllegalStateException("Your secure sign-in has expired. Please sign in again.")
-        val result = request(BASE_URL + "/auth/refresh", "POST", JSONObject().put("refreshToken", refresh))
-        saveSession(context, result)
-        return result.getString("idToken")
+        // Snapshot before locking so a waiter can detect that another caller
+        // has already rotated this exact session while it was waiting.
+        val observedIdToken = prefs.getString("idToken", null)
+        val observedRefreshToken = prefs.getString("refreshToken", null)
+
+        return synchronized(refreshTokenLock) {
+            val currentIdToken = prefs.getString("idToken", null)
+            val currentRefreshToken = prefs.getString("refreshToken", null)
+            val currentExpiry = prefs.getLong("tokenExpiry", 0L)
+            val now = System.currentTimeMillis()
+
+            // Another request may have completed rotation while this request
+            // waited for the lock. Reuse its fresh access token, never rotate
+            // the same one-time refresh token twice.
+            val sessionChanged = currentIdToken != observedIdToken ||
+                currentRefreshToken != observedRefreshToken
+            if (sessionChanged && !currentIdToken.isNullOrBlank() &&
+                now < currentExpiry - 30_000L) {
+                return@synchronized currentIdToken
+            }
+
+            val refresh = currentRefreshToken
+                ?: throw IllegalStateException("Your secure sign-in has expired. Please sign in again.")
+            val result = request(BASE_URL + "/auth/refresh", "POST",
+                JSONObject().put("refreshToken", refresh))
+            saveSession(context, result)
+            result.getString("idToken")
+        }
     }
 
     fun refreshIdToken(context: Context): String {
