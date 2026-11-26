@@ -158,7 +158,7 @@ def test_webrtc_signaling_is_peer_scoped_and_ice_is_available_to_owner(api, monk
             return json.dumps(self.payload).encode()
 
     def fake_urlopen(request, timeout):
-        url = request.full_url
+        url = request.full_url if hasattr(request, "full_url") else request
         if "/turn/credential?" in url:
             return FakeResponse({"apiKey": "temporary-test-key"})
         return FakeResponse([{"urls": ["stun:stun.example.test:3478"]},
