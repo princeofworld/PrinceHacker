@@ -16,7 +16,7 @@ BASE_URL = (
     or os.getenv("RENDER_EXTERNAL_URL")
     or DEFAULT_LIVE_URL
 ).rstrip("/")
-BOT_EMAIL = "e2e_ci_bot@princehacker.test"
+BOT_EMAIL = "e2e_ci_bot@example.com"
 TIMEOUT = (10, 30)
 
 
