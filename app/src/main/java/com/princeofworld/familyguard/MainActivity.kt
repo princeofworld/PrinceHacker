@@ -8,6 +8,7 @@ import android.content.Intent
 import android.content.pm.PackageManager
 import android.location.Location
 import android.location.LocationManager
+import android.media.projection.MediaProjectionManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -123,6 +124,29 @@ class MainActivity : ComponentActivity() {
         else if (installedAppsSync && !hasUsageAccess()) updateInstalledAppsSync(false)
     }
 
+    private val screenCaptureLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        val data = result.data
+        if (result.resultCode == RESULT_OK && data != null) {
+            LiveSharingService.startScreen(this, result.resultCode, data)
+            notice = "Screen sharing started. A persistent notification provides the Stop control."
+        } else {
+            notice = "Screen sharing was cancelled. Nothing was captured."
+        }
+    }
+
+    private val cameraPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) {
+            LiveSharingService.startCamera(this)
+            notice = "Camera sharing started. A persistent notification provides the Stop control."
+        } else {
+            notice = "Camera permission was not granted. Camera sharing remains off."
+        }
+    }
+
     private val photoPickerLauncher = registerForActivityResult(
         ActivityResultContracts.PickVisualMedia()
     ) { uri ->
@@ -229,7 +253,10 @@ class MainActivity : ComponentActivity() {
                     remoteConsentStatus = remoteConsentStatus,
                     onRefreshConsent = { refreshDeviceConsent(manual = true) },
                     onSaveProfile = { name, phone -> saveProfile(name, phone) },
-                    onPickPhoto = { photoPickerLauncher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }
+                    onPickPhoto = { photoPickerLauncher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
+                    onStartScreenShare = { requestScreenShare() },
+                    onStartCameraShare = { requestCameraShare() },
+                    onStopMediaShare = { LiveSharingService.stop(this) }
                 )
 
                 remoteLockRequestId?.let {
@@ -818,6 +845,23 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    private fun requestScreenShare() {
+        try {
+            val manager = getSystemService(MediaProjectionManager::class.java)
+            screenCaptureLauncher.launch(manager.createScreenCaptureIntent())
+        } catch (error: Exception) {
+            notice = "Could not request Android screen capture: ${error.message}"
+        }
+    }
+
+    private fun requestCameraShare() {
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
+            LiveSharingService.startCamera(this)
+        } else {
+            cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
+        }
+    }
+
     private fun openWebPage(url: String) {
         try { startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url))) }
         catch (_: Exception) { notice = "The page could not be opened." }
@@ -1168,7 +1212,10 @@ private fun FamilyGuardDashboard(
     remoteConsentStatus: String,
     onRefreshConsent: () -> Unit,
     onSaveProfile: (String, String) -> Unit,
-    onPickPhoto: () -> Unit
+    onPickPhoto: () -> Unit,
+    onStartScreenShare: () -> Unit,
+    onStartCameraShare: () -> Unit,
+    onStopMediaShare: () -> Unit
 ) {
     val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
     val scope = rememberCoroutineScope()
@@ -1250,6 +1297,15 @@ private fun FamilyGuardDashboard(
                             Text(if (locationSharingActive) "Sharing is active" else "Sharing is off", style = MaterialTheme.typography.bodySmall)
                             OutlinedButton(onClick = { if (locationSharingActive) onStopSharing() else onStartSharing() }, enabled = familyConsentEnabled || locationSharingActive, modifier = Modifier.fillMaxWidth()) { Text(if (locationSharingActive) "STOP" else "START") }
                         }
+                    }
+                }
+                Card(modifier = Modifier.fillMaxWidth()) {
+                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Text("Live Screen & Camera Sharing", style = MaterialTheme.typography.titleLarge)
+                        Text("Sharing starts only after you choose an option. Android shows its own screen-capture confirmation, and a persistent notification stays visible with a Stop control.", style = MaterialTheme.typography.bodySmall)
+                        Button(onClick = onStartScreenShare, modifier = Modifier.fillMaxWidth()) { Text("START SCREEN SHARING") }
+                        OutlinedButton(onClick = onStartCameraShare, modifier = Modifier.fillMaxWidth()) { Text("START CAMERA SHARING") }
+                        OutlinedButton(onClick = onStopMediaShare, modifier = Modifier.fillMaxWidth()) { Text("STOP LIVE SHARING") }
                     }
                 }
                 var editableName by remember(profileName) { mutableStateOf(profileName) }
