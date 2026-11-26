@@ -1061,16 +1061,6 @@ private fun FamilyGuardDashboard(
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     Text("PrinceCircle Menu", style = MaterialTheme.typography.titleLarge)
-                    Text("Account", style = MaterialTheme.typography.titleMedium)
-                    OutlinedButton(
-                        onClick = { scope.launch { drawerState.close(); onLogout() } },
-                        modifier = Modifier.fillMaxWidth()
-                    ) { Text("Login / Switch Account") }
-                    Text("Safety", style = MaterialTheme.typography.titleMedium)
-                    Button(
-                        onClick = { scope.launch { drawerState.close(); onSos() } },
-                        modifier = Modifier.fillMaxWidth()
-                    ) { Text("SOS Safety Alert") }
                     Text("Settings", style = MaterialTheme.typography.titleMedium)
                     OutlinedButton(
                         onClick = { scope.launch { drawerState.close(); onSetupPermissions() } },
