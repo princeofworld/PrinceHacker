@@ -177,6 +177,19 @@ object FamilyGuardApi {
             .apply()
     }
 
+    fun clearSession(context: Context) {
+        context.getSharedPreferences("familyguard_family", Context.MODE_PRIVATE).edit()
+            .remove("idToken").remove("refreshToken").remove("uid").remove("tokenExpiry").apply()
+    }
+
+    fun isSessionInvalid(error: Throwable): Boolean {
+        val message = error.message.orEmpty()
+        return message.contains("refresh session is invalid", true) ||
+            message.contains("refresh session expired", true) ||
+            message.contains("secure sign-in has expired", true) ||
+            message.contains("invalid, revoked, or expired access token", true)
+    }
+
     private val refreshTokenLock = Any()
 
     private fun rotateRefreshToken(context: Context): String {
@@ -204,8 +217,12 @@ object FamilyGuardApi {
 
             val refresh = currentRefreshToken
                 ?: throw IllegalStateException("Your secure sign-in has expired. Please sign in again.")
-            val result = request(BASE_URL + "/auth/refresh", "POST",
-                JSONObject().put("refreshToken", refresh))
+            val result = try {
+                request(BASE_URL + "/auth/refresh", "POST", JSONObject().put("refreshToken", refresh))
+            } catch (error: Exception) {
+                if (isSessionInvalid(error)) clearSession(context)
+                throw error
+            }
             saveSession(context, result)
             result.getString("idToken")
         }
