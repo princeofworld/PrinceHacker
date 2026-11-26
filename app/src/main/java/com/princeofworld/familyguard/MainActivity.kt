@@ -389,13 +389,12 @@ class MainActivity : ComponentActivity() {
         }
         val pending = android.app.PendingIntent.getActivity(
             this, commandId.hashCode(), launch,
-            android.app.PendingIntent.FLAG_UPDATE_CURRENT or
-                (if (Build.VERSION.SDK_INT >= 23) android.app.PendingIntent.FLAG_IMMUTABLE else 0)
+            android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
         )
         val title = if (kind == "ring") "FamilyCircle ring" else "FamilyCircle alert"
-        val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O)
-            android.app.Notification.Builder(this, channelId)
-        else @Suppress("DEPRECATION") android.app.Notification.Builder(this)
+        if (Build.VERSION.SDK_INT >= 33 &&
+            ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) return
+        val builder = android.app.Notification.Builder(this, channelId)
         val notification = builder.setSmallIcon(android.R.drawable.ic_dialog_info)
             .setContentTitle(title).setContentText(message).setStyle(
                 android.app.Notification.BigTextStyle().bigText(message)
