@@ -56,6 +56,57 @@ object FamilyGuardApi {
         }
     }
 
+    fun uploadPhoto(context: Context, uri: android.net.Uri): JSONObject {
+        val resolver = context.contentResolver
+        val mime = resolver.getType(uri)?.lowercase() ?: throw IllegalArgumentException("Unsupported photo type.")
+        require(mime in setOf("image/jpeg", "image/png", "image/webp")) { "Choose a JPEG, PNG, or WebP photo." }
+        val bytes = resolver.openInputStream(uri)?.use { input ->
+            val output = java.io.ByteArrayOutputStream()
+            val buffer = ByteArray(8192)
+            var total = 0
+            while (true) {
+                val count = input.read(buffer)
+                if (count < 0) break
+                total += count
+                require(total <= 5 * 1024 * 1024) { "Photo must be 5 MB or smaller." }
+                output.write(buffer, 0, count)
+            }
+            output.toByteArray()
+        } ?: throw IllegalArgumentException("Could not read the selected photo.")
+        val filename = resolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)?.use { cursor ->
+            if (cursor.moveToFirst()) cursor.getString(0) else null
+        }?.take(120) ?: "photo"
+        val deviceId = context.getSharedPreferences("familyguard_family", Context.MODE_PRIVATE).getString("deviceId", null)
+        fun send(accessToken: String): JSONObject {
+            val connection = (URL(BASE_URL + "/api/media/upload").openConnection() as HttpURLConnection).apply {
+                requestMethod = "POST"
+                connectTimeout = 15000
+                readTimeout = 20000
+                doOutput = true
+                setRequestProperty("Authorization", "Bearer $accessToken")
+                setRequestProperty("Content-Type", mime)
+                setRequestProperty("Accept", "application/json")
+                setRequestProperty("X-File-Name", filename)
+                if (!deviceId.isNullOrBlank()) setRequestProperty("X-FamilyGuard-Device", deviceId)
+            }
+            try {
+                connection.outputStream.use { it.write(bytes) }
+                val status = connection.responseCode
+                val stream = if (status in 200..299) connection.inputStream else connection.errorStream
+                val text = stream?.bufferedReader()?.use { it.readText() }.orEmpty()
+                val result = if (text.isBlank()) JSONObject() else JSONObject(text)
+                if (status !in 200..299) throw IllegalStateException(result.optString("detail", "Photo upload failed ($status)"))
+                return result
+            } finally { connection.disconnect() }
+        }
+        var token = refreshIdToken(context)
+        return try { send(token) } catch (error: IllegalStateException) {
+            if (!error.message.orEmpty().contains("expired", true) && !error.message.orEmpty().contains("invalid", true)) throw error
+            token = rotateRefreshToken(context)
+            send(token)
+        }
+    }
+
     fun postDeviceSummary(context: Context, deviceId: String, summary: JSONObject): JSONObject =
         syncDeviceSummary(context, deviceId, summary)
 

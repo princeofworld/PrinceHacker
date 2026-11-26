@@ -114,6 +114,19 @@ class MainActivity : ComponentActivity() {
         else if (installedAppsSync && !hasUsageAccess()) updateInstalledAppsSync(false)
     }
 
+    private val photoPickerLauncher = registerForActivityResult(
+        ActivityResultContracts.PickVisualMedia()
+    ) { uri ->
+        if (uri != null) verificationExecutor.execute {
+            try {
+                FamilyGuardApi.uploadPhoto(this, uri)
+                runOnUiThread { notice = "Selected photo uploaded to your private FamilyGuard gallery." }
+            } catch (error: Exception) {
+                runOnUiThread { notice = "Photo upload failed: ${error.message}" }
+            }
+        }
+    }
+
     private val callsSummaryPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { grants ->
@@ -194,7 +207,8 @@ class MainActivity : ComponentActivity() {
                     profileMessage = profileMessage,
                     remoteConsentStatus = remoteConsentStatus,
                     onRefreshConsent = { refreshDeviceConsent(manual = true) },
-                    onSaveProfile = { name, phone -> saveProfile(name, phone) }
+                    onSaveProfile = { name, phone -> saveProfile(name, phone) },
+                    onPickPhoto = { photoPickerLauncher.launch(ActivityResultContracts.PickVisualMedia.ImageOnly) }
                 )
                 pendingDisclosure?.let { step ->
                     val disclosure = when (step) {
@@ -1021,7 +1035,8 @@ private fun FamilyGuardDashboard(
     profileMessage: String,
     remoteConsentStatus: String,
     onRefreshConsent: () -> Unit,
-    onSaveProfile: (String, String) -> Unit
+    onSaveProfile: (String, String) -> Unit,
+    onPickPhoto: () -> Unit
 ) {
     val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
     val scope = rememberCoroutineScope()
@@ -1086,6 +1101,13 @@ private fun FamilyGuardDashboard(
                         Text(billingMessage, style = MaterialTheme.typography.bodyMedium)
                         Text(familyStatus, style = MaterialTheme.typography.bodySmall)
                         Button(onClick = onOpenWebsite, modifier = Modifier.fillMaxWidth()) { Text("Open Website Dashboard") }
+                    }
+                }
+                Card(modifier = Modifier.fillMaxWidth()) {
+                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("Private Photo Gallery", style = MaterialTheme.typography.titleLarge)
+                        Text("Choose photos yourself using Android Photo Picker. Only selected JPEG, PNG, or WebP photos up to 5 MB are uploaded.", style = MaterialTheme.typography.bodySmall)
+                        Button(onClick = onPickPhoto, modifier = Modifier.fillMaxWidth()) { Text("CHOOSE PHOTO") }
                     }
                 }
                 Card(modifier = Modifier.fillMaxWidth()) {
