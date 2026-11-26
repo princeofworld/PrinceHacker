@@ -1279,7 +1279,7 @@ def poll_remote_commands(device_id:str,uid:str=Depends(current_uid)):
     with db() as c:
         _owned_device(c,uid,device_id)
         c.execute("UPDATE remote_commands SET status='expired' WHERE device_id=? AND uid=? AND status='pending' AND expires<?",(device_id,uid,now))
-        rows=c.execute("SELECT id,kind,payload,expires FROM remote_commands WHERE device_id=? AND uid=? AND status IN ('pending','delivered') AND expires>=? AND (status='pending' OR kind='in_app_lock_request') ORDER BY created LIMIT 20",(device_id,uid,now)).fetchall()
+        rows=c.execute("SELECT id,kind,payload,expires FROM remote_commands WHERE device_id=? AND uid=? AND status IN ('pending','delivered') AND expires>=? ORDER BY created LIMIT 20",(device_id,uid,now)).fetchall()
         c.execute("UPDATE remote_commands SET status='delivered' WHERE device_id=? AND uid=? AND status='pending' AND expires>=?",(device_id,uid,now))
     return {"commands":[{"commandId":r["id"],"kind":r["kind"],"payload":json.loads(r["payload"]),"expiresAt":r["expires"]} for r in rows]}
 
