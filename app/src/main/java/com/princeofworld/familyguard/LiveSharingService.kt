@@ -82,6 +82,7 @@ class LiveSharingService : Service() {
     private var surfaceHelper: SurfaceTextureHelper? = null
     private var remoteDescriptionSet = false
     private val seenSignals = mutableSetOf<String>()
+    private val pendingRemoteCandidates = mutableListOf<IceCandidate>()
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -248,18 +249,24 @@ class LiveSharingService : Service() {
                                 payload.optString("sdp")
                             )
                             peer?.setRemoteDescription(object : SdpObserver {
-                                override fun onSetSuccess() { remoteDescriptionSet = true }
+                                override fun onSetSuccess() {
+                                    remoteDescriptionSet = true
+                                    pendingRemoteCandidates.forEach { peer?.addIceCandidate(it) }
+                                    pendingRemoteCandidates.clear()
+                                }
                                 override fun onSetFailure(error: String) = fail("Remote answer rejected: $error")
                                 override fun onCreateSuccess(description: SessionDescription) = Unit
                                 override fun onCreateFailure(error: String) = Unit
                             }, description)
                         }
                         "ice" -> {
-                            if (remoteDescriptionSet) peer?.addIceCandidate(IceCandidate(
+                            val candidate = IceCandidate(
                                 payload.optString("sdpMid"),
                                 payload.optInt("sdpMLineIndex"),
                                 payload.optString("candidate")
-                            ))
+                            )
+                            if (remoteDescriptionSet) peer?.addIceCandidate(candidate)
+                            else pendingRemoteCandidates.add(candidate)
                         }
                         "end" -> stopSharing(false)
                     }
