@@ -357,9 +357,10 @@ class MainActivity : ComponentActivity() {
                     val message = payload.optString("message", "FamilyGuard alert").take(180)
                     when (kind) {
                         "alert", "ring" -> {
-                            showRemoteSafetyNotification(commandId, kind, message)
-                            FamilyGuardApi.post(this, "/api/devices/$deviceId/commands/$commandId/ack",
-                                JSONObject().put("status", "completed"))
+                            if (showRemoteSafetyNotification(commandId, kind, message)) {
+                                FamilyGuardApi.post(this, "/api/devices/$deviceId/commands/$commandId/ack",
+                                    JSONObject().put("status", "completed"))
+                            }
                         }
                         "in_app_lock_request" -> runOnUiThread {
                             if (remoteLockRequestId == null && !inAppLocked) {
@@ -375,7 +376,7 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun showRemoteSafetyNotification(commandId: String, kind: String, message: String) {
+    private fun showRemoteSafetyNotification(commandId: String, kind: String, message: String): Boolean {
         val manager = getSystemService(Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
         val channelId = "princecircle_remote_safety"
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
@@ -393,13 +394,14 @@ class MainActivity : ComponentActivity() {
         )
         val title = if (kind == "ring") "FamilyCircle ring" else "FamilyCircle alert"
         if (Build.VERSION.SDK_INT >= 33 &&
-            ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) return
+            ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) return false
         val builder = android.app.Notification.Builder(this, channelId)
         val notification = builder.setSmallIcon(android.R.drawable.ic_dialog_info)
             .setContentTitle(title).setContentText(message).setStyle(
                 android.app.Notification.BigTextStyle().bigText(message)
             ).setContentIntent(pending).setAutoCancel(true).build()
         manager.notify(commandId.hashCode(), notification)
+        return true
     }
 
     private fun acknowledgeLockRequest(accepted: Boolean) {
