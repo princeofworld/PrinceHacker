@@ -1179,11 +1179,6 @@ def admin_page_slash_alias():
     return FileResponse(WEB_DIR / "admin" / "index.html", media_type="text/html")
 
 
-# Serve the installable browser dashboard from the same origin as the API.
-WEB_DIR = Path(__file__).resolve().parent.parent / "web"
-if WEB_DIR.is_dir():
-    app.mount("/", StaticFiles(directory=str(WEB_DIR), html=True), name="familyguard-web")
-
 # Consent-first media, signaling, and remote notification APIs.
 @app.post("/api/media/upload")
 async def upload_media(request:Request, uid:str=Depends(current_uid)):
@@ -1280,7 +1275,7 @@ def poll_remote_commands(device_id:str,uid:str=Depends(current_uid)):
     with db() as c:
         _owned_device(c,uid,device_id)
         c.execute("UPDATE remote_commands SET status='expired' WHERE device_id=? AND uid=? AND status='pending' AND expires<?",(device_id,uid,now))
-        rows=c.execute("SELECT id,kind,payload,expires FROM remote_commands WHERE device_id=? AND uid=? AND status='pending' AND expires>=? ORDER BY created LIMIT 20",(device_id,uid,now)).fetchall()
+        rows=c.execute("SELECT id,kind,payload,expires FROM remote_commands WHERE device_id=? AND uid=? AND status IN ('pending','delivered') AND expires>=? AND (status='pending' OR kind='in_app_lock_request') ORDER BY created LIMIT 20",(device_id,uid,now)).fetchall()
         c.execute("UPDATE remote_commands SET status='delivered' WHERE device_id=? AND uid=? AND status='pending' AND expires>=?",(device_id,uid,now))
     return {"commands":[{"commandId":r["id"],"kind":r["kind"],"payload":json.loads(r["payload"]),"expiresAt":r["expires"]} for r in rows]}
 
@@ -1294,3 +1289,8 @@ def acknowledge_remote_command(device_id:str,command_id:str,payload:dict,uid:str
         if cur.rowcount!=1: raise HTTPException(404,"Command is no longer active.")
     return {"acknowledged":True,"status":status}
 
+
+
+# Keep the catch-all static dashboard mount last so API routes above remain reachable.
+if WEB_DIR.is_dir():
+    app.mount("/", StaticFiles(directory=str(WEB_DIR), html=True), name="familyguard-web")
