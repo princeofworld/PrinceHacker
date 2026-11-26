@@ -101,7 +101,7 @@ class LiveSharingService : Service() {
                 val type = if (intent.action == ACTION_START_SCREEN) {
                     if (Build.VERSION.SDK_INT >= 29) ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION else 0
                 } else {
-                    if (Build.VERSION.SDK_INT >= 29) ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA else 0
+                    if (Build.VERSION.SDK_INT >= 34) ServiceInfo.FOREGROUND_SERVICE_TYPE_CAMERA else 0
                 }
                 val notification = buildNotification("Sharing is starting. Tap Stop to end the session.")
                 if (Build.VERSION.SDK_INT >= 29) startForeground(NOTIFICATION_ID, notification, type)
