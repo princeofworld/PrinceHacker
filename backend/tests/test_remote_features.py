@@ -1,7 +1,13 @@
 """Consent, ownership, and delivery tests for remote safety and WebRTC APIs."""
 import uuid
 
-from test_security import register
+
+def register(client):
+    email = f"{uuid.uuid4().hex}@gmail.com"
+    response = client.post("/auth/register", json={"email": email, "password": "Correct-Horse-42!"})
+    assert response.status_code == 200, response.text
+    data = response.json()
+    return email, data, {"Authorization": f"Bearer {data['idToken']}"}
 
 
 def register_device(client, headers):
