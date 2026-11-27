@@ -61,6 +61,13 @@ def test_remote_alert_ring_and_local_lock_request_are_owner_authenticated(api):
     )
     assert missing_local_acceptance.status_code == 400
 
+    invalid_ttl = client.post(
+        f"/api/devices/{device_id}/commands",
+        headers=owner_headers,
+        json={"kind": "alert", "ttlSeconds": "not-a-number"},
+    )
+    assert invalid_ttl.status_code == 400
+
     alert = client.post(
         f"/api/devices/{device_id}/commands",
         headers=owner_headers,
