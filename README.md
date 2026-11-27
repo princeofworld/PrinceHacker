@@ -1,22 +1,23 @@
-# FamilyGuard
+# PrinceCircle
 
-A consent-first family safety and parental controls Android app with a companion website and API.
+A consent-first family-safety Android app with a companion website dashboard and FastAPI backend.
 
 ## Current implemented behavior
 
-- Android app: Kotlin + Jetpack Compose, Gradle Kotlin DSL, JDK 17.
-- Location sharing: the participating device user must sign in, join a family, accept the in-app disclosure, grant foreground location permission, and explicitly start sharing. Sharing runs in a visible location foreground service with an ongoing notification; no background-location permission is requested.
-- Session limit: each sharing session has a fixed 10-minute auto-stop. The service removes location updates, revokes local consent, requests server-side consent revocation, records the session as `expired`, and shows a stopped notification. A new session requires a fresh user Start action.
-- Privacy disclosure: the app explains the location fields collected, family recipients, visible notification, session duration, and stop/revoke controls before it requests location permission.
-- Privacy and terms: `PRIVACY_POLICY.md` and `TERMS_OF_SERVICE.md` are served by the API and linked from the website and Android app.
-- Account deletion: signed-in users can request deletion from the website dashboard or Android app. The API removes the account and associated records and transfers an owned family to a remaining member, or deletes an empty family.
-- Backend: FastAPI with SQLite fallback and PostgreSQL support through `DATABASE_URL`.
-- GitHub Actions: pushes to `main` run backend regression tests (SQLite and PostgreSQL when configured), frontend JavaScript syntax checks, Android APK build, APK signature verification, and artifact upload. If release signing secrets are absent, the workflow produces an unsigned debug APK artifact; that is not a Play Store release.
+- Android app: Kotlin + Jetpack Compose, Gradle Kotlin DSL, JDK 17; current app version 1.3.4 (versionCode 9).
+- Location sharing: the participating device user signs in, joins a family, accepts the disclosure, grants foreground location permission and explicitly starts sharing. A visible foreground-service notification includes Stop. Sessions auto-stop after 10 minutes; no background-location permission is requested.
+- Device summaries: separate consent and Android permissions control optional installed-app names/packages/icons, aggregate screen time, call count/duration, contacts count and battery percentage. SMS messages and private communications are not read.
+- Live media: camera and screen sharing are user-started, preceded by an in-app disclosure and Android permission/system confirmation, and show a persistent notification with Stop. WebRTC uses temporary Metered ICE/TURN credentials and short-lived signaling sessions. The signaling API does not record the video stream.
+- Remote safety commands: dashboard alerts/ring-style notifications are checked while the app is foregrounded. Temporary in-app pause requests require acceptance on the device and can be declined/unlocked locally; Android and other apps are never locked.
+- Private photo gallery: users explicitly choose photos through Android's system photo picker before upload.
+- Payments: one-time ₹999 UPI for 30 days, with manual UTR verification; no automatic recurring mandate.
+- Backend: FastAPI with SQLite fallback and PostgreSQL support through DATABASE_URL.
+- GitHub Actions: backend regression tests (SQLite/PostgreSQL), frontend JavaScript syntax checks, Android APK build, APK signature verification and artifact upload. If release signing secrets are absent, the workflow produces an unsigned debug APK artifact, not a signed release.
 
 ## Build
 
-The GitHub Actions workflow uses Gradle 8.13, JDK 17, Android SDK 36, and runs `:app:assembleDebug` or `:app:assembleRelease` depending on configured signing secrets.
+GitHub Actions uses Gradle 8.13, JDK 17 and Android SDK 36. It builds a signed release when all signing secrets are configured; otherwise it builds a debug fallback.
 
 ## Important
 
-FamilyGuard is intended for transparent, consensual use only. Every participating device user controls their own location sharing. The app is not an emergency-response service. Passing automated tests or building an APK does not by itself certify Google Play policy compliance; verify the final app behavior, disclosures, Data safety form, privacy policy, and account-deletion flow before publishing.
+PrinceCircle is for transparent, consent-based use only. Every participating device user controls their own sharing. Automated tests and APK builds do not replace real-device testing or legal/privacy review. The service is not an emergency-response service.
