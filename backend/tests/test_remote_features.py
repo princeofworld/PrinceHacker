@@ -41,6 +41,17 @@ def register_device(client, headers):
     return device_id
 
 
+def test_latest_app_version_matches_current_android_release(api, monkeypatch):
+    _, client = api
+    monkeypatch.delenv("APP_VERSION_NAME", raising=False)
+    monkeypatch.delenv("APP_VERSION_CODE", raising=False)
+    response = client.get("/app/latest-version")
+    assert response.status_code == 200
+    assert response.json()["versionName"] == "1.3.4"
+    assert response.json()["versionCode"] == 9
+    assert response.json()["minimumVersionCode"] <= 9
+
+
 def test_remote_alert_ring_and_local_lock_request_are_owner_authenticated(api):
     _, client = api
     _, _, owner_headers = register(client)
