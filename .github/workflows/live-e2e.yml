@@ -16,10 +16,9 @@ jobs:
   live-e2e:
     name: Live production E2E (isolated CI bot)
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     env:
-      LIVE_BASE_URL: ${{ vars.LIVE_BASE_URL }}
-      RENDER_EXTERNAL_URL: ${{ vars.RENDER_EXTERNAL_URL }}
+      LIVE_BASE_URL: https://princehacker.onrender.com
       LIVE_E2E_TEST_PASSWORD: ${{ secrets.LIVE_E2E_TEST_PASSWORD }}
     steps:
       - name: Checkout
@@ -28,29 +27,32 @@ jobs:
       - name: Wait for Render auto-deploy and public routes
         shell: bash
         run: |
-          BASE_URL="${LIVE_BASE_URL:-${RENDER_EXTERNAL_URL:-https://princehacker.onrender.com}}"
-          BASE_URL="${BASE_URL%/}"
-          echo "Waiting up to 10 minutes for Render health and browser routes at ${BASE_URL}"
+          BASE_URL="${LIVE_BASE_URL%/}"
+          echo "Waiting up to 30 minutes for Render health and the expected dashboard revision at ${BASE_URL}"
           ready=false
           expected_dashboard_build="2026-11-27-live-e2e20-fix"
-          for attempt in $(seq 1 40); do
-            health_code=$(curl -sS -L -o /tmp/fg-health.json -w '%{http_code}' --connect-timeout 3 --max-time 10 "${BASE_URL}/health" || true)
-            root_code=$(curl -sS -L -o /dev/null -w '%{http_code}' --connect-timeout 3 --max-time 10 "${BASE_URL}/" || true)
-            login_code=$(curl -sS -L -o /dev/null -w '%{http_code}' --connect-timeout 3 --max-time 10 "${BASE_URL}/login" || true)
-            dashboard_code=$(curl -sS -L -o /tmp/fg-dashboard.html -w '%{http_code}' --connect-timeout 3 --max-time 10 "${BASE_URL}/dashboard" || true)
-            dashboard_build_ok=false
-            if grep -q "name=\\"princecircle-build\\" content=\\"${expected_dashboard_build}\\"" /tmp/fg-dashboard.html 2>/dev/null; then dashboard_build_ok=true; fi
-            admin_code=$(curl -sS -L -o /dev/null -w '%{http_code}' --connect-timeout 3 --max-time 10 "${BASE_URL}/admin" || true)
-            admin_slash_code=$(curl -sS -L -o /dev/null -w '%{http_code}' --connect-timeout 3 --max-time 10 "${BASE_URL}/admin/" || true)
-            echo "Attempt ${attempt}/40: health=${health_code} root=${root_code} login=${login_code} dashboard=${dashboard_code} dashboard_build=${dashboard_build_ok} admin=${admin_code} admin_slash=${admin_slash_code}"
+          for attempt in $(seq 1 16); do
+            # Render free instances can take over a minute to wake. Allow the
+            # health request to finish instead of killing it after 10 seconds.
+            health_code=$(curl -sS -L -o /tmp/fg-health.json -w '%{http_code}' --connect-timeout 10 --max-time 90 "${BASE_URL}/health" || true)
+            root_code="000"; login_code="000"; dashboard_code="000"; admin_code="000"; admin_slash_code="000"; dashboard_build_ok=false
+            if [[ "${health_code}" == "200" ]]; then
+              root_code=$(curl -sS -L -o /dev/null -w '%{http_code}' --connect-timeout 5 --max-time 25 "${BASE_URL}/" || true)
+              login_code=$(curl -sS -L -o /dev/null -w '%{http_code}' --connect-timeout 5 --max-time 25 "${BASE_URL}/login" || true)
+              dashboard_code=$(curl -sS -L -o /tmp/fg-dashboard.html -w '%{http_code}' --connect-timeout 5 --max-time 25 "${BASE_URL}/dashboard" || true)
+              if grep -q "name=\"princecircle-build\" content=\"${expected_dashboard_build}\"" /tmp/fg-dashboard.html 2>/dev/null; then dashboard_build_ok=true; fi
+              admin_code=$(curl -sS -L -o /dev/null -w '%{http_code}' --connect-timeout 5 --max-time 25 "${BASE_URL}/admin" || true)
+              admin_slash_code=$(curl -sS -L -o /dev/null -w '%{http_code}' --connect-timeout 5 --max-time 25 "${BASE_URL}/admin/" || true)
+            fi
+            echo "Attempt ${attempt}/16: health=${health_code} root=${root_code} login=${login_code} dashboard=${dashboard_code} dashboard_build=${dashboard_build_ok} admin=${admin_code} admin_slash=${admin_slash_code}"
             if [[ "${health_code}" == "200" && "${root_code}" == "200" && "${login_code}" == "200" && "${dashboard_code}" == "200" && "${dashboard_build_ok}" == "true" && "${admin_code}" == "200" && "${admin_slash_code}" == "200" ]]; then
               ready=true
               break
             fi
-            if [[ "${attempt}" -lt 40 ]]; then sleep 15; fi
+            if [[ "${attempt}" -lt 16 ]]; then sleep 15; fi
           done
           if [[ "${ready}" != "true" ]]; then
-            echo "Render did not finish deploying the expected routes and dashboard build marker within 10 minutes."
+            echo "Render did not serve the expected routes and dashboard revision within 30 minutes."
             echo "Last health response:"
             cat /tmp/fg-health.json || true
             exit 1
