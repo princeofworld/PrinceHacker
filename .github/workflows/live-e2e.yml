@@ -1,4 +1,4 @@
-name: PrinceCircle Live E2E
+name: Golden Prince Live E2E
 
 on:
   push:
@@ -9,7 +9,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: princecircle-live-e2e
+  group: golden-prince-live-e2e
   cancel-in-progress: true
 
 jobs:
@@ -73,7 +73,7 @@ jobs:
         if: always()
         run: |
           {
-            echo "## PrinceCircle Live E2E"
+            echo "## Golden Prince Live E2E"
             echo ""
             echo "- Target: ${LIVE_BASE_URL:-${RENDER_EXTERNAL_URL:-https://princehacker.onrender.com}}"
             if [[ "${{ steps.live-tests.outcome }}" == "success" ]]; then
