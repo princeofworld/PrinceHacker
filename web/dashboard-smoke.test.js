@@ -1,0 +1,41 @@
+"use strict";
+const fs = require("node:fs");
+const assert = require("node:assert/strict");
+
+const html = fs.readFileSync("web/dashboard.html", "utf8");
+const requiredTabs = [
+  "overview",
+  "profile",
+  "devices",
+  "payments",
+  "privacy",
+  "location-history",
+  "installed-apps",
+  "live-sharing",
+  "media-gallery",
+  "premium",
+];
+
+for (const tab of requiredTabs) {
+  assert.match(html, new RegExp('data-tab="' + tab + '"'), "Missing dashboard tab: " + tab);
+  assert.match(html, new RegExp('id="tab-' + tab + '"'), "Missing dashboard panel: " + tab);
+}
+for (const script of ["/dashboard.js", "/dashboard-features.js", "/media-gallery.js"]) {
+  assert.ok(html.includes('src="' + script), "Missing dashboard script: " + script);
+}
+assert.doesNotMatch(html, /data-tab="(?:family|sos|sos-alerts)"/i, "Removed Family/SOS tabs must not return");
+
+const js = [
+  fs.readFileSync("web/dashboard.js", "utf8"),
+  fs.readFileSync("web/dashboard-features.js", "utf8"),
+  fs.readFileSync("web/media-gallery.js", "utf8"),
+].join("\n");
+for (const id of [
+  "device-list", "consent-controls", "payment-history", "fg-overview-account",
+  "fg-location-content", "fg-app-content", "fg-live-sessions", "fg-live-video",
+  "fg-media-content", "fg-refresh-media",
+]) {
+  assert.ok(html.includes('id="' + id + '"'), "Dashboard HTML is missing required control: " + id);
+  assert.ok(js.includes(id), "Dashboard scripts no longer reference required control: " + id);
+}
+process.stdout.write("PrinceCircle dashboard smoke checks passed.\n");
