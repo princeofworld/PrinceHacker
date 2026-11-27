@@ -234,7 +234,7 @@ class MainActivity : ComponentActivity() {
                         },
                         onDecline = { finish() }
                     )
-                } else FamilyGuardDashboard(
+                } else PrinceCircleDashboard(
                     premium = premium,
                     billingMessage = billingMessage,
                     usageText = usageText,
@@ -1207,7 +1207,7 @@ private fun LoginScreen(
 }
 
 @Composable
-private fun FamilyGuardDashboard(
+private fun PrinceCircleDashboard(
     premium: Boolean,
     installedAppsSync: Boolean,
     callsContactsSync: Boolean,
@@ -1290,13 +1290,7 @@ private fun FamilyGuardDashboard(
                     Text("PrinceCircle", style = MaterialTheme.typography.headlineLarge)
                     TextButton(onClick = { scope.launch { drawerState.open() } }) { Text("☰ Menu") }
                 }
-                Card(modifier = Modifier.fillMaxWidth()) {
-                    Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text("Family Dashboard", style = MaterialTheme.typography.titleMedium)
-                        Text("View family devices", style = MaterialTheme.typography.bodySmall)
-                        Button(onClick = onOpenWebsite, modifier = Modifier.fillMaxWidth()) { Text("OPEN") }
-                    }
-                }
+
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     Card(modifier = Modifier.weight(1f)) {
                         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -1313,64 +1307,7 @@ private fun FamilyGuardDashboard(
                         }
                     }
                 }
-                Card(modifier = Modifier.fillMaxWidth()) {
-                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                        Text("Live Screen & Camera Sharing", style = MaterialTheme.typography.titleLarge)
-                        Text("Sharing starts only after you choose an option. Android shows its own screen-capture confirmation, and a persistent notification stays visible with a Stop control.", style = MaterialTheme.typography.bodySmall)
-                        Button(onClick = onStartScreenShare, modifier = Modifier.fillMaxWidth()) { Text("START SCREEN SHARING") }
-                        OutlinedButton(onClick = onStartCameraShare, modifier = Modifier.fillMaxWidth()) { Text("START CAMERA SHARING") }
-                        OutlinedButton(onClick = onStopMediaShare, modifier = Modifier.fillMaxWidth()) { Text("STOP LIVE SHARING") }
-                    }
-                }
-                var editableName by remember(profileName) { mutableStateOf(profileName) }
-                var editablePhone by remember(profilePhone) { mutableStateOf(profilePhone) }
-                Card(modifier = Modifier.fillMaxWidth()) {
-                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text("Profile", style = MaterialTheme.typography.titleLarge)
-                        OutlinedTextField(editableName, { editableName = it }, label = { Text("Name") }, modifier = Modifier.fillMaxWidth())
-                        OutlinedTextField(editablePhone, { editablePhone = it }, label = { Text("Contact phone") }, modifier = Modifier.fillMaxWidth())
-                        Text(profileMessage, style = MaterialTheme.typography.bodySmall)
-                        Button(onClick = { onSaveProfile(editableName, editablePhone) }, modifier = Modifier.fillMaxWidth()) { Text("SAVE PROFILE") }
-                    }
-                }
-                Card(modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)) {
-                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text(if (premium) "PREMIUM ACTIVE" else "ACCOUNT SIGNED IN", style = MaterialTheme.typography.titleLarge)
-                        Text(billingMessage, style = MaterialTheme.typography.bodyMedium)
-                        Text(familyStatus, style = MaterialTheme.typography.bodySmall)
-                        Button(onClick = onOpenWebsite, modifier = Modifier.fillMaxWidth()) { Text("Open Website Dashboard") }
-                    }
-                }
-                Card(modifier = Modifier.fillMaxWidth()) {
-                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text("Private Photo Gallery", style = MaterialTheme.typography.titleLarge)
-                        Text("Choose photos yourself using Android Photo Picker. Only selected JPEG, PNG, or WebP photos up to 5 MB are uploaded.", style = MaterialTheme.typography.bodySmall)
-                        Button(onClick = onPickPhoto, modifier = Modifier.fillMaxWidth()) { Text("CHOOSE PHOTO") }
-                    }
-                }
-                Card(modifier = Modifier.fillMaxWidth()) {
-                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                        Text("Location Sharing", style = MaterialTheme.typography.titleLarge)
-                        Text(if (locationSharingActive) "LIVE SHARING ON" else "LIVE SHARING OFF", style = MaterialTheme.typography.titleMedium)
-                        Text(
-                            when {
-                                !familyConsentEnabled -> "Family location consent is OFF. Enable it from your PrinceCircle family settings before starting."
-                                locationSharingActive -> "Your location is being shared with your family. A persistent Android notification stays visible. Each session automatically ends after 10 minutes."
-                                else -> "Family consent is enabled. Turn on the switch to start a visible live-sharing session."
-                            },
-                            style = MaterialTheme.typography.bodySmall
-                        )
-                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                            Text(if (locationSharingActive) "Stop Live Sharing" else "Start Live Sharing")
-                            Switch(
-                                checked = locationSharingActive,
-                                onCheckedChange = { enabled -> if (enabled) onStartSharing() else onStopSharing() },
-                                enabled = familyConsentEnabled || locationSharingActive
-                            )
-                        }
-                        Text(familyStatus, style = MaterialTheme.typography.bodySmall)
-                    }
-                }
+
                 Card(modifier = Modifier.fillMaxWidth()) {
                     Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                         Text("App Usage & Device Summary", style = MaterialTheme.typography.titleLarge)
