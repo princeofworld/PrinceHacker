@@ -56,20 +56,7 @@ for(const f of families){
   let card=document.createElement("div");card.className="border border-slate-700 rounded-xl p-4 mb-3";
   card.append(node(v.deviceName+" · "+v.email,"font-bold"),node((v.online?"Online":"Offline")+" · Battery "+(v.batteryPercent==null?"N/A":v.batteryPercent+"%"),"muted text-sm mt-2"));
   addLocation(card,v);
-  api("/api/devices/"+encodeURIComponent(v.deviceId)+"/sos?familyId="+encodeURIComponent(f.familyId)).then(data=>{
-   (data.alerts||[]).forEach(a=>{
-    const alert=document.createElement("section");
-    alert.className="rounded-lg border "+(a.status==="active"?"border-red-500 bg-red-950 text-red-100":"border-slate-600 bg-slate-900 text-slate-300")+" p-3 mt-3";
-    const heading=node((a.status==="active"?"SOS EMERGENCY ALERT":"SOS ALERT · RESOLVED")+" · "+a.message,"font-semibold");
-    alert.append(heading,node("Device: "+v.deviceName+" · "+(v.online?"Online":"Offline")+" · Captured: "+new Date(Number(a.capturedAt)*1000).toLocaleString()+" · Received: "+new Date(Number(a.createdAt)*1000).toLocaleString(),"text-xs mt-1"));
-    if(a.status==="active"){
-     const resolve=document.createElement("button");resolve.type="button";resolve.className="btn secondary mt-2";resolve.textContent="Mark SOS resolved";
-     resolve.onclick=async()=>{resolve.disabled=true;try{await api("/api/devices/"+encodeURIComponent(v.deviceId)+"/sos/"+encodeURIComponent(a.alertId)+"/resolve?familyId="+encodeURIComponent(f.familyId),{method:"POST"});heading.textContent="SOS ALERT · RESOLVED · "+a.message;alert.className="rounded-lg border border-slate-600 bg-slate-900 text-slate-300 p-3 mt-3";resolve.remove()}catch(e){msg("notice","Could not resolve SOS alert: "+e.message);resolve.disabled=false}};
-     alert.append(resolve)
-    }
-    card.append(alert)
-   })
-  }).catch(e=>msg("notice","Family SOS alerts could not load: "+e.message));
+
   root.append(card)
  })}
 }
