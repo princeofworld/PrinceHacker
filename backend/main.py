@@ -1,4 +1,4 @@
-"""Self-contained FamilyGuard API using SQLite, scrypt passwords and signed JWTs.
+"""Self-contained Golden Prince API using SQLite, scrypt passwords and signed JWTs.
 Location sharing is opt-in, visible, time-limited and revocable.
 """
 from __future__ import annotations
@@ -59,7 +59,7 @@ if not os.getenv("RENDER_DISK_PATH") and not Path("/var/data").exists():
 if DB_KIND=="sqlite":
     Path(DB_PATH).parent.mkdir(parents=True,exist_ok=True)
 WEB_DIR = Path(__file__).resolve().parent.parent / "web"
-app=FastAPI(title="PrinceCircle API",version="3.0.0")
+app=FastAPI(title="Golden Prince API",version="3.0.0")
 
 class RefreshIn(BaseModel):
     refreshToken: str=Field(min_length=20,max_length=256)
@@ -421,7 +421,7 @@ def health():
             warnings.append("SQLite is using a local path; verify a persistent disk is mounted or configure PostgreSQL.")
         if not backup_encryption_configured():
             warnings.append("Encrypted admin backups are disabled until a valid 64-character BACKUP_ENCRYPTION_KEY is configured.")
-        return {"status":"ok","service":"princecircle-api","auth":"database-jwt","storage":DB_KIND,"databaseConnected":True,"deviceTableReady":table_ready,"locationSharing":"consent-gated","encryptedBackupsConfigured":backup_encryption_configured(),"backupMode":"manual-admin-download","razorpayEnabled":razorpay_configured(),"razorpayWebhookConfigured":razorpay_configured() and bool(os.getenv("RAZORPAY_WEBHOOK_SECRET","").strip()),"productionWarnings":warnings}
+        return {"status":"ok","service":"golden-prince-api","auth":"database-jwt","storage":DB_KIND,"databaseConnected":True,"deviceTableReady":table_ready,"locationSharing":"consent-gated","encryptedBackupsConfigured":backup_encryption_configured(),"backupMode":"manual-admin-download","razorpayEnabled":razorpay_configured(),"razorpayWebhookConfigured":razorpay_configured() and bool(os.getenv("RAZORPAY_WEBHOOK_SECRET","").strip()),"productionWarnings":warnings}
     except Exception:
         raise HTTPException(503,"Database connection or required schema is unavailable.")
 def issue_auth_session(uid:str):
@@ -432,7 +432,7 @@ def issue_auth_session(uid:str):
     access_hash=hashlib.sha256(access.encode()).hexdigest()
     with db() as c:
         c.execute("INSERT INTO refresh_sessions(token_hash,uid,expires,created,access_token_hash) VALUES(?,?,?,?,?)",(digest,uid,now+30*24*60*60,now,access_hash))
-    return {"idToken":access,"refreshToken":refresh,"localId":uid,"expiresIn":"3600","refreshExpiresIn":"2592000","authProvider":"FamilyGuard"}
+    return {"idToken":access,"refreshToken":refresh,"localId":uid,"expiresIn":"3600","refreshExpiresIn":"2592000","authProvider":"Golden Prince"}
 
 @app.post("/auth/register")
 def register(payload:AuthIn):
@@ -1134,7 +1134,7 @@ def admin_download_backup(_:str=Depends(require_admin)):
 
 @app.get("/app/latest-version")
 def latest_app_version():
-    return {"versionName":os.getenv("APP_VERSION_NAME","1.3.4"),"versionCode":int(os.getenv("APP_VERSION_CODE","9")),"minimumVersionCode":int(os.getenv("APP_MINIMUM_VERSION_CODE","5")),"apkUrl":os.getenv("APP_APK_URL","https://github.com/princeofworld/PrinceHacker/releases/latest/download/PrinceCircle-release-signed.apk"),"releaseNotes":"PrinceCircle update. Review the changes before installing.","forceUpdate":False}
+    return {"versionName":os.getenv("APP_VERSION_NAME","1.3.4"),"versionCode":int(os.getenv("APP_VERSION_CODE","9")),"minimumVersionCode":int(os.getenv("APP_MINIMUM_VERSION_CODE","5")),"apkUrl":os.getenv("APP_APK_URL","https://github.com/princeofworld/PrinceHacker/releases/latest/download/Golden Prince-release-signed.apk"),"releaseNotes":"Golden Prince update. Review the changes before installing.","forceUpdate":False}
 
 @app.delete("/account-data")
 def delete_account_data(uid:str=Depends(current_uid)):
@@ -1286,7 +1286,7 @@ def enqueue_remote_command(device_id:str,payload:dict,uid:str=Depends(current_ui
     kind=str(payload.get("kind",""))
     if kind not in {"alert","ring","in_app_lock_request"}: raise HTTPException(400,"Unsupported remote command.")
     if kind=="in_app_lock_request" and payload.get("requiresLocalAcceptance") is not True: raise HTTPException(400,"Temporary in-app lock requires explicit local acceptance.")
-    message=str(payload.get("message","PrinceCircle alert"))[:180]
+    message=str(payload.get("message","Golden Prince alert"))[:180]
     try: ttl_seconds=int(payload.get("ttlSeconds",120))
     except (TypeError,ValueError): raise HTTPException(400,"ttlSeconds must be an integer.")
     now=time.time(); cid=secrets.token_urlsafe(18); expires=now+min(300,max(30,ttl_seconds))
