@@ -1290,7 +1290,6 @@ private fun PrinceCircleDashboard(
                     Text("PrinceCircle", style = MaterialTheme.typography.headlineLarge)
                     TextButton(onClick = { scope.launch { drawerState.open() } }) { Text("☰ Menu") }
                 }
-
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     Card(modifier = Modifier.weight(1f)) {
                         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -1307,7 +1306,33 @@ private fun PrinceCircleDashboard(
                         }
                     }
                 }
-
+                Card(modifier = Modifier.fillMaxWidth()) {
+                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Text("Live Screen & Camera Sharing", style = MaterialTheme.typography.titleLarge)
+                        Text("Sharing starts only after you choose an option. Android shows its own screen-capture confirmation, and a persistent notification stays visible with a Stop control.", style = MaterialTheme.typography.bodySmall)
+                        Button(onClick = onStartScreenShare, modifier = Modifier.fillMaxWidth()) { Text("START SCREEN SHARING") }
+                        OutlinedButton(onClick = onStartCameraShare, modifier = Modifier.fillMaxWidth()) { Text("START CAMERA SHARING") }
+                        OutlinedButton(onClick = onStopMediaShare, modifier = Modifier.fillMaxWidth()) { Text("STOP LIVE SHARING") }
+                    }
+                }
+                var editableName by remember(profileName) { mutableStateOf(profileName) }
+                var editablePhone by remember(profilePhone) { mutableStateOf(profilePhone) }
+                Card(modifier = Modifier.fillMaxWidth()) {
+                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("Profile", style = MaterialTheme.typography.titleLarge)
+                        OutlinedTextField(editableName, { editableName = it }, label = { Text("Name") }, modifier = Modifier.fillMaxWidth())
+                        OutlinedTextField(editablePhone, { editablePhone = it }, label = { Text("Contact phone") }, modifier = Modifier.fillMaxWidth())
+                        Text(profileMessage, style = MaterialTheme.typography.bodySmall)
+                        Button(onClick = { onSaveProfile(editableName, editablePhone) }, modifier = Modifier.fillMaxWidth()) { Text("SAVE PROFILE") }
+                    }
+                }
+                Card(modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)) {
+                    Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text(if (premium) "PREMIUM ACTIVE" else "ACCOUNT SIGNED IN", style = MaterialTheme.typography.titleLarge)
+                        Text(billingMessage, style = MaterialTheme.typography.bodyMedium)
+                        Button(onClick = onOpenWebsite, modifier = Modifier.fillMaxWidth()) { Text("Open Website Dashboard") }
+                    }
+                }
                 Card(modifier = Modifier.fillMaxWidth()) {
                     Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                         Text("App Usage & Device Summary", style = MaterialTheme.typography.titleLarge)
