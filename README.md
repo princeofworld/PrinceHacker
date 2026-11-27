@@ -1,4 +1,4 @@
-# PrinceCircle
+# Golden Prince
 
 A consent-first family-safety Android app with a companion website dashboard and FastAPI backend.
 
@@ -20,4 +20,4 @@ GitHub Actions uses Gradle 8.13, JDK 17 and Android SDK 36. It builds a signed r
 
 ## Important
 
-PrinceCircle is for transparent, consent-based use only. Every participating device user controls their own sharing. Automated tests and APK builds do not replace real-device testing or legal/privacy review. The service is not an emergency-response service.
+Golden Prince is for transparent, consent-based use only. Every participating device user controls their own sharing. Automated tests and APK builds do not replace real-device testing or legal/privacy review. The service is not an emergency-response service.
