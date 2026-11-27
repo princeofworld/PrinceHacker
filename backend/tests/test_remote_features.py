@@ -207,6 +207,13 @@ def test_webrtc_signaling_is_peer_scoped_and_ice_is_available_to_owner(api, monk
                            headers=other_headers)
     assert forbidden.status_code == 404
 
+    ended = client.post(f"/api/webrtc/{session_id}/signals", headers=owner_headers,
+                        json={"kind": "end", "senderId": "android-phone", "payload": {}})
+    assert ended.status_code == 200
+    after_end = client.get(f"/api/webrtc/{session_id}/signals?sender_id=dashboard-browser",
+                           headers=owner_headers)
+    assert after_end.status_code == 404
+
 
 def test_manual_upi_utr_review_activates_premium_for_30_days(api, monkeypatch):
     _, client = api
