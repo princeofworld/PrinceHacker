@@ -206,3 +206,68 @@ def test_webrtc_signaling_is_peer_scoped_and_ice_is_available_to_owner(api, monk
     forbidden = client.get(f"/api/webrtc/{session_id}/signals?sender_id=intruder",
                            headers=other_headers)
     assert forbidden.status_code == 404
+
+
+def test_manual_upi_utr_review_activates_premium_for_30_days(api, monkeypatch):
+    _, client = api
+    _, user, headers = register(client)
+    monkeypatch.setenv("ADMIN_PANEL_USERNAME", "test-admin")
+    monkeypatch.setenv("ADMIN_PANEL_PASSWORD", "test-admin-password-strong-123")
+
+    config = client.get("/payment/upi-config")
+    assert config.status_code == 200
+    assert config.json()["amount"] == 99900
+
+    submitted = client.post("/payment/submit-utr", headers=headers,
+                            json={"utr": "123456789012"})
+    assert submitted.status_code == 200, submitted.text
+    payment_id = submitted.json()["paymentId"]
+
+    duplicate = client.post("/payment/submit-utr", headers=headers,
+                            json={"utr": "123456789012"})
+    assert duplicate.status_code == 409
+
+    pending = client.get("/payment/my-utr", headers=headers)
+    assert pending.status_code == 200
+    assert pending.json()["payments"][0]["status"] == "pending"
+
+    assert client.get("/admin/api/payments").status_code == 401
+    admin_headers = {"Authorization": "Basic " + __import__("base64").b64encode(
+        b"test-admin:test-admin-password-strong-123").decode()}
+    queue = client.get("/admin/api/payments?status=pending", headers=admin_headers)
+    assert queue.status_code == 200
+    assert any(item["id"] == payment_id for item in queue.json()["payments"])
+
+    approved = client.post(f"/admin/api/payments/{payment_id}/approve",
+                           headers=admin_headers, json={"note": "Verified in test"})
+    assert approved.status_code == 200, approved.text
+    assert approved.json()["approved"] is True
+
+    billing = client.get("/billing/status", headers=headers)
+    assert billing.status_code == 200, billing.text
+    assert billing.json().get("plan") == "premium"
+
+    repeated = client.post(f"/admin/api/payments/{payment_id}/approve",
+                           headers=admin_headers, json={"note": "Duplicate"})
+    assert repeated.status_code == 409
+
+
+def test_manual_upi_utr_rejection_does_not_unlock_premium(api, monkeypatch):
+    _, client = api
+    _, _, headers = register(client)
+    monkeypatch.setenv("ADMIN_PANEL_USERNAME", "test-admin")
+    monkeypatch.setenv("ADMIN_PANEL_PASSWORD", "test-admin-password-strong-123")
+    submitted = client.post("/payment/submit-utr", headers=headers,
+                            json={"utr": "987654321098"})
+    assert submitted.status_code == 200, submitted.text
+    payment_id = submitted.json()["paymentId"]
+    admin_headers = {"Authorization": "Basic " + __import__("base64").b64encode(
+        b"test-admin:test-admin-password-strong-123").decode()}
+    rejected = client.post(f"/admin/api/payments/{payment_id}/reject",
+                           headers=admin_headers, json={"note": "Not found in statement"})
+    assert rejected.status_code == 200, rejected.text
+    payment = client.get("/payment/my-utr", headers=headers).json()["payments"][0]
+    assert payment["status"] == "rejected"
+    billing = client.get("/billing/status", headers=headers)
+    assert billing.status_code == 200
+    assert billing.json().get("plan") != "premium"
