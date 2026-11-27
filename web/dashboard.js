@@ -30,12 +30,18 @@ ownDevices.forEach(v=>{
  api("/api/devices/"+encodeURIComponent(v.deviceId)+"/locations?limit=20").then(data=>{const history=document.createElement("section");history.className="rounded-xl border border-slate-700 p-4 mt-3";history.append(node("Location History Timeline","font-semibold text-teal-200"));(data.locations||[]).forEach(point=>history.append(node(new Date(Number(point.capturedAt)*1000).toLocaleString()+" · "+Number(point.latitude).toFixed(5)+", "+Number(point.longitude).toFixed(5),"muted text-xs mt-2")));if(!data.locations?.length)history.append(node("No location history available.","muted text-sm mt-2"));card.append(history)}).catch(()=>{card.append(node("Location history unavailable. Check that location consent is enabled.","muted text-xs mt-2"))});
  const summaryGrid=document.createElement("div");summaryGrid.className="grid md:grid-cols-2 gap-3 mt-4";
  const appsCard=document.createElement("section");appsCard.className="rounded-xl border border-slate-700 bg-slate-900/60 p-4";
- appsCard.append(node("Installed Apps & Today's Screen Time","font-semibold text-teal-200"),node("Screen time: "+Number(v.screen_time_minutes||0)+" minutes","muted text-sm mt-2"));
+ appsCard.append(node("Installed Apps & Today's Screen Time","font-semibold text-teal-200"));
  const appList=Array.isArray(v.installed_apps)?v.installed_apps:[];
- appsCard.append(node(appList.length?appList.join(" · "):"No app summary shared yet.","muted text-sm mt-2 break-words"));
+ if(v.apps_sync_enabled){
+  appsCard.append(node("Screen time: "+Number(v.screen_time_minutes||0)+" minutes","muted text-sm mt-2"));
+  const labels=appList.map(x=>typeof x==="string"?x:(x?.name||"Unknown app"));
+  appsCard.append(node(labels.length?labels.join(" · "):"No app summary shared yet.","muted text-sm mt-2 break-words"));
+ }else appsCard.append(node("App and usage sync is OFF. No stored app details are displayed.","muted text-sm mt-2"));
  const callsCard=document.createElement("section");callsCard.className="rounded-xl border border-slate-700 bg-slate-900/60 p-4";
  const callSeconds=Number(v.today_calls_duration_sec||0),callDuration=Math.floor(callSeconds/3600)+"h "+Math.floor((callSeconds%3600)/60)+"m";
- callsCard.append(node("Today's Calls & Contacts Summary","font-semibold text-teal-200"),node("Total calls: "+Number(v.today_calls_count||0),"muted text-sm mt-2"),node("Total call duration: "+callDuration,"muted text-sm mt-1"),node("Total contacts: "+Number(v.contacts_count||0),"muted text-sm mt-1"));
+ callsCard.append(node("Today's Calls & Contacts Summary","font-semibold text-teal-200"));
+ if(v.calls_contacts_sync_enabled)callsCard.append(node("Total calls: "+Number(v.today_calls_count||0),"muted text-sm mt-2"),node("Total call duration: "+callDuration,"muted text-sm mt-1"),node("Total contacts: "+Number(v.contacts_count||0),"muted text-sm mt-1"));
+ else callsCard.append(node("Calls and contacts sync is OFF. No stored summary is displayed.","muted text-sm mt-2"));
  summaryGrid.append(appsCard,callsCard);card.append(summaryGrid);
  const commandPanel=document.createElement("section");commandPanel.className="rounded-xl border border-slate-700 p-4 mt-4";
  commandPanel.append(node("Remote safety controls","font-semibold text-teal-200"),node("Commands are delivered while PrinceCircle is open on the device. Alerts need notification permission. An in-app pause always requires the device user's acceptance and can be unlocked locally.","muted text-xs mt-2"));
