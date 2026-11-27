@@ -43,4 +43,4 @@ assert.ok(featureJs.includes('api("/api/profile")'), "Overview must use the prof
 const backend = fs.readFileSync("backend/main.py", "utf8");
 assert.ok(backend.includes("payload.today_calls_count if payload.calls_contacts_sync_enabled else 0"), "Call totals must be cleared when calls/contacts sync is OFF");
 assert.ok(backend.includes("payload.contacts_count if payload.calls_contacts_sync_enabled else 0"), "Contact totals must be cleared when calls/contacts sync is OFF");
-process.stdout.write("PrinceCircle dashboard smoke checks passed.\n");
+process.stdout.write("Golden Prince dashboard smoke checks passed.\n");
