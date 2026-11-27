@@ -38,4 +38,6 @@ for (const id of [
   assert.ok(html.includes('id="' + id + '"'), "Dashboard HTML is missing required control: " + id);
   assert.ok(js.includes(id), "Dashboard scripts no longer reference required control: " + id);
 }
+const featureJs = fs.readFileSync("web/dashboard-features.js", "utf8");
+assert.ok(featureJs.includes('api("/api/profile")'), "Overview must use the profile endpoint that returns the display name");
 process.stdout.write("PrinceCircle dashboard smoke checks passed.\n");
