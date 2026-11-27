@@ -742,7 +742,10 @@ def update_device_summary(device_id:str,payload:DeviceSummaryUpdate,uid:str=Depe
             (json.dumps(list(dict.fromkeys(apps)),ensure_ascii=False) if payload.apps_sync_enabled else "[]",
              payload.installed_apps_count if payload.apps_sync_enabled else 0,
              payload.screen_time_minutes if payload.apps_sync_enabled else 0,
-             payload.today_calls_count,payload.today_calls_duration_sec,payload.contacts_count,payload.battery_percent if consent.get("battery") else None,
+             payload.today_calls_count if payload.calls_contacts_sync_enabled else 0,
+             payload.today_calls_duration_sec if payload.calls_contacts_sync_enabled else 0,
+             payload.contacts_count if payload.calls_contacts_sync_enabled else 0,
+             payload.battery_percent if consent.get("battery") else None,
              int(payload.location_granted),int(payload.usage_granted),int(payload.calls_granted),int(payload.contacts_granted),
              int(payload.apps_sync_enabled),int(payload.calls_contacts_sync_enabled),synced_at,synced_at,device_id,uid))
     return {"updated":True,"deviceId":device_id}
