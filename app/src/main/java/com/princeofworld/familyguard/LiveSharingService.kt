@@ -111,7 +111,7 @@ class LiveSharingService : Service() {
                         startSharing(intent)
                     } catch (error: Exception) {
                         updateNotification("Sharing could not start: ${error.message ?: "unknown error"}")
-                        stopSharing(false)
+                        stopSharing(true)
                     }
                 }
             }
@@ -120,6 +120,13 @@ class LiveSharingService : Service() {
     }
 
     private fun startSharing(startIntent: Intent) {
+        if (sessionId != null) {
+            updateNotification("A live sharing session is already active. Tap Stop before starting another.")
+            return
+        }
+        remoteDescriptionSet = false
+        seenSignals.clear()
+        pendingRemoteCandidates.clear()
         val prefs = getSharedPreferences("familyguard_family", Context.MODE_PRIVATE)
         val deviceId = prefs.getString("deviceId", null)?.takeIf { it.isNotBlank() }
             ?: throw IllegalStateException("Device registration is not ready. Sign in and retry.")
