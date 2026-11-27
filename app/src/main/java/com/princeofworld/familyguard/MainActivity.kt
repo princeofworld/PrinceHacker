@@ -1182,7 +1182,7 @@ private fun LoginScreen(
     Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
         Column(modifier = Modifier.fillMaxSize().padding(24.dp), verticalArrangement = Arrangement.Center) {
             Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        Image(painter = painterResource(R.drawable.golden-prince_logo), contentDescription = "Golden Prince crown logo", modifier = Modifier.size(56.dp), contentScale = ContentScale.Fit)
+                        Image(painter = painterResource(R.drawable.princecircle_logo), contentDescription = "Golden Prince crown logo", modifier = Modifier.size(56.dp), contentScale = ContentScale.Fit)
                         Text("Golden Prince", style = MaterialTheme.typography.headlineLarge)
                     }
             Spacer(Modifier.height(8.dp))
