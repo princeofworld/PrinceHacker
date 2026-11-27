@@ -436,7 +436,7 @@ class MainActivity : ComponentActivity() {
             this, commandId.hashCode(), launch,
             android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
         )
-        val title = if (kind == "ring") "FamilyCircle ring" else "FamilyCircle alert"
+        val title = if (kind == "ring") "PrinceCircle ring" else "PrinceCircle alert"
         if (Build.VERSION.SDK_INT >= 33 &&
             ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) return false
         val builder = android.app.Notification.Builder(this, channelId)
@@ -1381,7 +1381,7 @@ private fun FamilyGuardDashboard(
                         }
                     }
                 }
-                Text("PrinceCircle location sharing is visible, consent-based and revocable. SOS and account settings are available from the menu.", style = MaterialTheme.typography.bodySmall)
+                Text("PrinceCircle location sharing is visible, consent-based and revocable. Account settings are available from the menu.", style = MaterialTheme.typography.bodySmall)
             }
         }
     }
