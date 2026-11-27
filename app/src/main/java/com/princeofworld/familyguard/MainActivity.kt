@@ -234,7 +234,7 @@ class MainActivity : ComponentActivity() {
                         },
                         onDecline = { finish() }
                     )
-                } else Golden PrinceDashboard(
+                } else GoldenPrinceDashboard(
                     premium = premium,
                     billingMessage = billingMessage,
                     usageText = usageText,
@@ -1207,7 +1207,7 @@ private fun LoginScreen(
 }
 
 @Composable
-private fun Golden PrinceDashboard(
+private fun GoldenPrinceDashboard(
     premium: Boolean,
     installedAppsSync: Boolean,
     callsContactsSync: Boolean,
