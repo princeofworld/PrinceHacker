@@ -1131,7 +1131,7 @@ def admin_download_backup(_:str=Depends(require_admin)):
 
 @app.get("/app/latest-version")
 def latest_app_version():
-    return {"versionName":os.getenv("APP_VERSION_NAME","1.3.3"),"versionCode":int(os.getenv("APP_VERSION_CODE","8")),"minimumVersionCode":int(os.getenv("APP_MINIMUM_VERSION_CODE","5")),"apkUrl":os.getenv("APP_APK_URL","https://github.com/princeofworld/PrinceHacker/releases/latest/download/PrinceCircle-release-signed.apk"),"releaseNotes":"PrinceCircle update. Review the changes before installing.","forceUpdate":False}
+    return {"versionName":os.getenv("APP_VERSION_NAME","1.3.4"),"versionCode":int(os.getenv("APP_VERSION_CODE","9")),"minimumVersionCode":int(os.getenv("APP_MINIMUM_VERSION_CODE","5")),"apkUrl":os.getenv("APP_APK_URL","https://github.com/princeofworld/PrinceHacker/releases/latest/download/PrinceCircle-release-signed.apk"),"releaseNotes":"PrinceCircle update. Review the changes before installing.","forceUpdate":False}
 
 @app.delete("/account-data")
 def delete_account_data(uid:str=Depends(current_uid)):
