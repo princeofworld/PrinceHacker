@@ -30,7 +30,7 @@ jobs:
           BASE_URL="${LIVE_BASE_URL%/}"
           echo "Waiting up to 30 minutes for Render health and the expected dashboard revision at ${BASE_URL}"
           ready=false
-          expected_dashboard_build="2026-11-27-live-e2e20-fix"
+          expected_dashboard_build="2026-11-27-live-e2e22-fix"
           for attempt in $(seq 1 16); do
             # Render free instances can take over a minute to wake. Allow the
             # health request to finish instead of killing it after 10 seconds.
