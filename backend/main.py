@@ -1131,7 +1131,7 @@ def admin_download_backup(_:str=Depends(require_admin)):
 
 @app.get("/app/latest-version")
 def latest_app_version():
-    return {"versionName":os.getenv("APP_VERSION_NAME","1.3.1"),"versionCode":int(os.getenv("APP_VERSION_CODE","6")),"minimumVersionCode":int(os.getenv("APP_MINIMUM_VERSION_CODE","5")),"apkUrl":os.getenv("APP_APK_URL","https://github.com/princeofworld/PrinceHacker/releases/latest/download/PrinceCircle-release-signed.apk"),"releaseNotes":"PrinceCircle update. Review the changes before installing.","forceUpdate":False}
+    return {"versionName":os.getenv("APP_VERSION_NAME","1.3.3"),"versionCode":int(os.getenv("APP_VERSION_CODE","8")),"minimumVersionCode":int(os.getenv("APP_MINIMUM_VERSION_CODE","5")),"apkUrl":os.getenv("APP_APK_URL","https://github.com/princeofworld/PrinceHacker/releases/latest/download/PrinceCircle-release-signed.apk"),"releaseNotes":"PrinceCircle update. Review the changes before installing.","forceUpdate":False}
 
 @app.delete("/account-data")
 def delete_account_data(uid:str=Depends(current_uid)):
@@ -1273,7 +1273,8 @@ def get_webrtc_signals(session_id:str,sender_id:str,uid:str=Depends(current_uid)
     if not sender_id: raise HTTPException(400,"A signaling client ID is required.")
     with db() as c:
         s=c.execute("SELECT uid,expires,status FROM webrtc_sessions WHERE id=?",(session_id,)).fetchone()
-        if not s or s["uid"]!=uid: raise HTTPException(404,"Session not found.")
+        if not s or s["uid"]!=uid or s["expires"]<time.time() or s["status"]!="active":
+            raise HTTPException(404,"Active session not found.")
         rows=c.execute("SELECT id,sender_id,kind,payload,created FROM webrtc_signals WHERE session_id=? AND sender_id<>? ORDER BY created LIMIT 50",(session_id,sender_id)).fetchall()
     return {"signals":[{"signalId":r["id"],"senderId":r["sender_id"],"kind":r["kind"],"payload":json.loads(r["payload"]),"createdAt":r["created"]} for r in rows]}
 
@@ -1282,7 +1283,7 @@ def enqueue_remote_command(device_id:str,payload:dict,uid:str=Depends(current_ui
     kind=str(payload.get("kind",""))
     if kind not in {"alert","ring","in_app_lock_request"}: raise HTTPException(400,"Unsupported remote command.")
     if kind=="in_app_lock_request" and payload.get("requiresLocalAcceptance") is not True: raise HTTPException(400,"Temporary in-app lock requires explicit local acceptance.")
-    message=str(payload.get("message","FamilyGuard alert"))[:180]
+    message=str(payload.get("message","PrinceCircle alert"))[:180]
     now=time.time(); cid=secrets.token_urlsafe(18); expires=now+min(300,max(30,int(payload.get("ttlSeconds",120))))
     with db() as c:
         _owned_device(c,uid,device_id)
