@@ -88,6 +88,7 @@ class MainActivity : ComponentActivity() {
     }
     private var notice by mutableStateOf<String?>(null)
     private var pendingDisclosure by mutableStateOf<String?>(null)
+    private var pendingMediaShare by mutableStateOf<String?>(null)
     private var permissionStatusText by mutableStateOf("Checking permissions…")
     private var usageAccessGranted by mutableStateOf(false)
     private var permissionSetupComplete by mutableStateOf(false)
@@ -286,6 +287,24 @@ class MainActivity : ComponentActivity() {
                     )
                 }
 
+                pendingMediaShare?.let { mode ->
+                    val screen = mode == "screen"
+                    AlertDialog(
+                        onDismissRequest = { pendingMediaShare = null },
+                        title = { Text(if (screen) "Share your screen now?" else "Share your camera now?") },
+                        text = { Text(
+                            if (screen) "If you continue, PrinceCircle will transmit the screen you choose to share to the signed-in account's dashboard. Android will show its own screen-capture confirmation, and a persistent notification with a Stop control will remain visible. Do not share passwords, private chats, or other sensitive content. Sharing starts only after both confirmations and stops when you tap Stop."
+                            else "If you continue, PrinceCircle will transmit live camera video to the signed-in account's dashboard. Camera permission is required, a persistent notification with a Stop control will remain visible, and you can stop at any time. The camera is not started until you confirm here and grant Android permission."
+                        ) },
+                        confirmButton = {
+                            TextButton(onClick = {
+                                pendingMediaShare = null
+                                if (screen) launchScreenSharePermission() else launchCameraSharePermission()
+                            }) { Text("I agree — continue") }
+                        },
+                        dismissButton = { TextButton(onClick = { pendingMediaShare = null }) { Text("Cancel") } }
+                    )
+                }
                 pendingDisclosure?.let { step ->
                     val disclosure = when (step) {
                         "location" -> "LOCATION SHARING DISCLOSURE: If you agree and grant Android foreground location permission, PrinceCircle collects your device's latitude/longitude, accuracy, capture time and optional battery percentage. When you separately opt in and start sharing, these details are sent over HTTPS to members of the family you joined. A persistent notification remains visible. Each session ends automatically after 10 minutes; sharing and consent are then switched off, and you must press Start again for another session. You can stop earlier or revoke permission at any time. PrinceCircle does not request background location permission."
@@ -876,10 +895,13 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun requestScreenShare() {
-        if (Build.VERSION.SDK_INT >= 33 &&
-            ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
-            notice = "Allow notifications first so Android can keep the live-sharing Stop control visible."
-            notificationsPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        pendingMediaShare = "screen"
+    }
+
+    private fun launchScreenSharePermission() {
+        if (!hasNotificationPermission()) {
+            notice = "Allow notifications first so Android can keep the live-sharing Stop control visible, then tap Share Screen again."
+            if (Build.VERSION.SDK_INT >= 33) notificationsPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
             return
         }
         try {
@@ -891,10 +913,13 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun requestCameraShare() {
-        if (Build.VERSION.SDK_INT >= 33 &&
-            ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
-            notice = "Allow notifications first so Android can keep the live-sharing Stop control visible."
-            notificationsPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        pendingMediaShare = "camera"
+    }
+
+    private fun launchCameraSharePermission() {
+        if (!hasNotificationPermission()) {
+            notice = "Allow notifications first so Android can keep the live-sharing Stop control visible, then tap Share Camera again."
+            if (Build.VERSION.SDK_INT >= 33) notificationsPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
             return
         }
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
