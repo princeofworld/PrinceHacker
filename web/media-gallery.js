@@ -26,5 +26,5 @@
  }
  $("fg-refresh-media")?.addEventListener("click",()=>load().catch(e=>{$("fg-media-content").textContent=e.message;}));
  document.addEventListener("click",e=>{if(e.target.closest('[data-tab="media-gallery"]'))load().catch(err=>{$("fg-media-content").textContent=err.message;});});
- if(token())load().catch(e=>{$("fg-media-content").textContent=e.message;});
+
 })();
