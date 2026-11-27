@@ -12,6 +12,8 @@ import android.media.projection.MediaProjectionManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.provider.Settings
 import androidx.work.WorkManager
 import androidx.core.content.ContextCompat
@@ -76,6 +78,13 @@ class MainActivity : ComponentActivity() {
     private var billingMessage by mutableStateOf("Sign in to check your PrinceCircle plan.")
     private var premiumPriceLabel by mutableStateOf("₹999 / month")
     private val verificationExecutor = Executors.newSingleThreadExecutor()
+    private val commandPollHandler = Handler(Looper.getMainLooper())
+    private val commandPollRunnable = object : Runnable {
+        override fun run() {
+            if (signedIn) pollRemoteCommands()
+            commandPollHandler.postDelayed(this, 15_000L)
+        }
+    }
     private var notice by mutableStateOf<String?>(null)
     private var pendingDisclosure by mutableStateOf<String?>(null)
     private var permissionStatusText by mutableStateOf("Checking permissions…")
@@ -455,11 +464,21 @@ class MainActivity : ComponentActivity() {
         locationSharingActive = getSharedPreferences("familyguard_family", Context.MODE_PRIVATE)
             .getString("locationSessionStatus", "stopped") == "active"
         if (signedIn) refreshDeviceConsent()
-        if (signedIn) pollRemoteCommands()
+        commandPollHandler.removeCallbacks(commandPollRunnable)
+        if (signedIn) {
+            pollRemoteCommands()
+            commandPollHandler.postDelayed(commandPollRunnable, 15_000L)
+        }
         updatePermissionStatus()
     }
 
+    override fun onPause() {
+        commandPollHandler.removeCallbacks(commandPollRunnable)
+        super.onPause()
+    }
+
     override fun onDestroy() {
+        commandPollHandler.removeCallbacks(commandPollRunnable)
         verificationExecutor.shutdownNow()
         super.onDestroy()
     }
