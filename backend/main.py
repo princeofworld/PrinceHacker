@@ -1284,7 +1284,9 @@ def enqueue_remote_command(device_id:str,payload:dict,uid:str=Depends(current_ui
     if kind not in {"alert","ring","in_app_lock_request"}: raise HTTPException(400,"Unsupported remote command.")
     if kind=="in_app_lock_request" and payload.get("requiresLocalAcceptance") is not True: raise HTTPException(400,"Temporary in-app lock requires explicit local acceptance.")
     message=str(payload.get("message","PrinceCircle alert"))[:180]
-    now=time.time(); cid=secrets.token_urlsafe(18); expires=now+min(300,max(30,int(payload.get("ttlSeconds",120))))
+    try: ttl_seconds=int(payload.get("ttlSeconds",120))
+    except (TypeError,ValueError): raise HTTPException(400,"ttlSeconds must be an integer.")
+    now=time.time(); cid=secrets.token_urlsafe(18); expires=now+min(300,max(30,ttl_seconds))
     with db() as c:
         _owned_device(c,uid,device_id)
         enforce_rate_limit(c,"remote-command:"+uid+":"+device_id,30)
