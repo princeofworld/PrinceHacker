@@ -16,7 +16,7 @@ BASE_URL = (
     or os.getenv("RENDER_EXTERNAL_URL")
     or DEFAULT_LIVE_URL
 ).rstrip("/")
-BOT_EMAIL = "e2e_ci_bot@example.com"
+BOT_EMAIL = f"e2e_ci_{secrets.token_hex(12)}@example.com"
 TIMEOUT = (10, 30)
 
 
@@ -75,7 +75,7 @@ def test_live_familyguard_end_to_end():
             f"Dashboard is missing required tab: {tab_label} ({tab_id})"
         )
 
-    password = os.getenv("LIVE_E2E_TEST_PASSWORD") or secrets.token_urlsafe(24)
+    password = secrets.token_urlsafe(32)
     token = None
     device_id = "e2e-" + secrets.token_hex(18)
     account_created = False
