@@ -14,7 +14,7 @@
  const stamp=value=>value?new Date(Number(value)*1000).toLocaleString():"—";
  const deviceData=async()=>{const d=await api("/devices");return d.devices||[];};
  async function overview(){
-  const [profile,billing,devices]=await Promise.all([api("/account/profile"),api("/billing/status"),deviceData()]);
+  const [profile,billing,devices]=await Promise.all([api("/api/profile"),api("/billing/status"),deviceData()]);
   $("fg-overview-account").textContent=(profile.name||profile.email||"Signed-in account")+" · "+(profile.email||"");
   $("fg-overview-plan").textContent="Plan: "+(billing.plan||billing.status||"Free")+" · Premium ₹999/month";
   $("fg-overview-devices").textContent=devices.length+" registered device(s) · "+devices.filter(x=>x.online).length+" online · "+devices.filter(x=>!x.online).length+" offline";
