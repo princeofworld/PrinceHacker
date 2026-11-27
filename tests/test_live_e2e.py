@@ -60,10 +60,15 @@ def test_live_familyguard_end_to_end():
     dashboard_html = request("GET", "/dashboard", expected={200}).text
     required_tabs = {
         "overview": "Overview",
+        "profile": "Profile",
+        "family": "Family",
+        "devices": "Devices",
+        "payments": "Payments",
+        "privacy": "Privacy",
         "location-history": "Location History",
         "installed-apps": "Installed Apps",
-        "sos-alerts": "SOS Alerts",
-        "family-management": "Family Management",
+        "live-sharing": "Live Sharing",
+        "media-gallery": "Photo Gallery",
         "premium": "Premium",
     }
     for tab_id, tab_label in required_tabs.items():
