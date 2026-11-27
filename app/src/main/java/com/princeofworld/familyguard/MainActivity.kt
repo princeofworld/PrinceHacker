@@ -336,8 +336,9 @@ class MainActivity : ComponentActivity() {
                                 notice = "Deleting your account and associated data…"
                                 verificationExecutor.execute {
                                     try {
-                                        FamilyGuardApi.deleteAccount(this)
+                                        LiveSharingService.stop(this)
                                         stopService(Intent(this, FamilyLocationService::class.java))
+                                        FamilyGuardApi.deleteAccount(this)
                                         getSharedPreferences("familyguard_family", Context.MODE_PRIVATE).edit().clear().apply()
                                         getSharedPreferences("familyguard_privacy", Context.MODE_PRIVATE).edit().clear().apply()
                                         getSharedPreferences("familyguard_permissions", Context.MODE_PRIVATE).edit().clear().apply()
@@ -502,6 +503,7 @@ class MainActivity : ComponentActivity() {
             locationSharingActive = false
         }
         DeviceSummarySyncScheduler.cancel(this)
+        LiveSharingService.stop(this)
         stopService(Intent(this, FamilyLocationService::class.java))
     }
 
@@ -643,6 +645,8 @@ class MainActivity : ComponentActivity() {
 
     private fun logout() {
         DeviceSummarySyncScheduler.cancel(this)
+        commandPollHandler.removeCallbacks(commandPollRunnable)
+        LiveSharingService.stop(this)
         stopService(Intent(this, FamilyLocationService::class.java))
         getSharedPreferences("familyguard_family", Context.MODE_PRIVATE).edit()
             .remove("idToken").remove("refreshToken").remove("uid").remove("tokenExpiry").apply()
