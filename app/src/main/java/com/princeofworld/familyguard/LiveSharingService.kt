@@ -71,7 +71,7 @@ class LiveSharingService : Service() {
     }
 
     private val worker = Executors.newSingleThreadExecutor()
-    private val poller = Executors.newSingleThreadScheduledExecutor()
+    @Volatile private var poller = Executors.newSingleThreadScheduledExecutor()
     private val clientId = UUID.randomUUID().toString()
     private var sessionId: String? = null
     private var factory: PeerConnectionFactory? = null
@@ -232,6 +232,11 @@ class LiveSharingService : Service() {
     }
 
     private fun startPolling() {
+        // A stopped sharing session shuts its scheduler down. Recreate it so a later
+        // user-started session in the same service process can receive WebRTC signals.
+        if (poller.isShutdown || poller.isTerminated) {
+            poller = Executors.newSingleThreadScheduledExecutor()
+        }
         poller.scheduleWithFixedDelay({
             try {
                 val sid = sessionId ?: return@scheduleWithFixedDelay
