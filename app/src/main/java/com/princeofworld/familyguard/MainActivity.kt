@@ -75,7 +75,7 @@ class MainActivity : ComponentActivity() {
     private var usageText by mutableStateOf("Usage report is available to Premium subscribers after enabling Usage Access.")
     private var premium by mutableStateOf(false)
     private var billingReady by mutableStateOf(false)
-    private var billingMessage by mutableStateOf("Sign in to check your PrinceCircle plan.")
+    private var billingMessage by mutableStateOf("Sign in to check your Golden Prince plan.")
     private var premiumPriceLabel by mutableStateOf("₹999 / month")
     private val verificationExecutor = Executors.newSingleThreadExecutor()
     private val commandPollHandler = Handler(Looper.getMainLooper())
@@ -93,7 +93,7 @@ class MainActivity : ComponentActivity() {
     private var usageAccessGranted by mutableStateOf(false)
     private var permissionSetupComplete by mutableStateOf(false)
     private var showDeleteDataDialog by mutableStateOf(false)
-    private var familyStatus by mutableStateOf("Sign in to PrinceCircle to create or join a family.")
+    private var familyStatus by mutableStateOf("Sign in to Golden Prince to create or join a family.")
     private var familyId by mutableStateOf("")
     private var inviteCode by mutableStateOf("")
     private var familyLocationsText by mutableStateOf("No family locations loaded.")
@@ -164,7 +164,7 @@ class MainActivity : ComponentActivity() {
         if (uri != null) verificationExecutor.execute {
             try {
                 FamilyGuardApi.uploadPhoto(this, uri)
-                runOnUiThread { notice = "Selected photo uploaded to your private PrinceCircle gallery." }
+                runOnUiThread { notice = "Selected photo uploaded to your private Golden Prince gallery." }
             } catch (error: Exception) {
                 runOnUiThread { notice = "Photo upload failed: ${error.message}" }
             }
@@ -211,9 +211,9 @@ class MainActivity : ComponentActivity() {
                 if (inAppLocked) {
                     Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
                         Column(modifier = Modifier.fillMaxSize().padding(24.dp), verticalArrangement = Arrangement.Center) {
-                            Text("PrinceCircle temporarily locked", style = MaterialTheme.typography.headlineMedium)
+                            Text("Golden Prince temporarily locked", style = MaterialTheme.typography.headlineMedium)
                             Spacer(Modifier.height(12.dp))
-                            Text("This pause applies only inside PrinceCircle. Android and other apps are unaffected.")
+                            Text("This pause applies only inside Golden Prince. Android and other apps are unaffected.")
                             Spacer(Modifier.height(20.dp))
                             Button(onClick = { inAppLocked = false }, modifier = Modifier.fillMaxWidth()) { Text("UNLOCK APP") }
                         }
@@ -234,7 +234,7 @@ class MainActivity : ComponentActivity() {
                         },
                         onDecline = { finish() }
                     )
-                } else PrinceCircleDashboard(
+                } else Golden PrinceDashboard(
                     premium = premium,
                     billingMessage = billingMessage,
                     usageText = usageText,
@@ -273,7 +273,7 @@ class MainActivity : ComponentActivity() {
                     AlertDialog(
                         onDismissRequest = { acknowledgeLockRequest(false) },
                         title = { Text("Temporary in-app lock request") },
-                        text = { Text("$remoteLockMessage\n\nThis affects only the PrinceCircle app. You can decline; accepting does not lock Android or other apps.") },
+                        text = { Text("$remoteLockMessage\n\nThis affects only the Golden Prince app. You can decline; accepting does not lock Android or other apps.") },
                         confirmButton = { TextButton(onClick = { acknowledgeLockRequest(true) }) { Text("Accept for this app") } },
                         dismissButton = { TextButton(onClick = { acknowledgeLockRequest(false) }) { Text("Decline") } }
                     )
@@ -281,7 +281,7 @@ class MainActivity : ComponentActivity() {
                 if (inAppLocked) {
                     AlertDialog(
                         onDismissRequest = { },
-                        title = { Text("PrinceCircle temporarily locked") },
+                        title = { Text("Golden Prince temporarily locked") },
                         text = { Text("This is an app-only pause. Android remains fully available, and you can unlock this app now.") },
                         confirmButton = { TextButton(onClick = { inAppLocked = false }) { Text("Unlock app") } }
                     )
@@ -293,8 +293,8 @@ class MainActivity : ComponentActivity() {
                         onDismissRequest = { pendingMediaShare = null },
                         title = { Text(if (screen) "Share your screen now?" else "Share your camera now?") },
                         text = { Text(
-                            if (screen) "If you continue, PrinceCircle will transmit the screen you choose to share to the signed-in account's dashboard. Android will show its own screen-capture confirmation, and a persistent notification with a Stop control will remain visible. Do not share passwords, private chats, or other sensitive content. Sharing starts only after both confirmations and stops when you tap Stop."
-                            else "If you continue, PrinceCircle will transmit live camera video to the signed-in account's dashboard. Camera permission is required, a persistent notification with a Stop control will remain visible, and you can stop at any time. The camera is not started until you confirm here and grant Android permission."
+                            if (screen) "If you continue, Golden Prince will transmit the screen you choose to share to the signed-in account's dashboard. Android will show its own screen-capture confirmation, and a persistent notification with a Stop control will remain visible. Do not share passwords, private chats, or other sensitive content. Sharing starts only after both confirmations and stops when you tap Stop."
+                            else "If you continue, Golden Prince will transmit live camera video to the signed-in account's dashboard. Camera permission is required, a persistent notification with a Stop control will remain visible, and you can stop at any time. The camera is not started until you confirm here and grant Android permission."
                         ) },
                         confirmButton = {
                             TextButton(onClick = {
@@ -307,9 +307,9 @@ class MainActivity : ComponentActivity() {
                 }
                 pendingDisclosure?.let { step ->
                     val disclosure = when (step) {
-                        "location" -> "LOCATION SHARING DISCLOSURE: If you agree and grant Android foreground location permission, PrinceCircle collects your device's latitude/longitude, accuracy, capture time and optional battery percentage. When you separately opt in and start sharing, these details are sent over HTTPS to members of the family you joined. A persistent notification remains visible. Each session ends automatically after 10 minutes; sharing and consent are then switched off, and you must press Start again for another session. You can stop earlier or revoke permission at any time. PrinceCircle does not request background location permission."
-                        "notifications" -> "PrinceCircle requests permission for visible safety and account notices. You can deny this and continue using features that do not require notifications."
-                        "usage_restricted" -> "Android blocks Usage Access for some sideloaded apps until the device user allows restricted settings. PrinceCircle cannot switch this on. On the next screen, open the three-dot menu and choose Allow restricted settings. Android may ask you to confirm your device lock. Return to PrinceCircle and tap One-Click Permission Setup again; then enable PrinceCircle in Usage Access. If Android does not offer this option, do not bypass the device's security controls."
+                        "location" -> "LOCATION SHARING DISCLOSURE: If you agree and grant Android foreground location permission, Golden Prince collects your device's latitude/longitude, accuracy, capture time and optional battery percentage. When you separately opt in and start sharing, these details are sent over HTTPS to members of the family you joined. A persistent notification remains visible. Each session ends automatically after 10 minutes; sharing and consent are then switched off, and you must press Start again for another session. You can stop earlier or revoke permission at any time. Golden Prince does not request background location permission."
+                        "notifications" -> "Golden Prince requests permission for visible safety and account notices. You can deny this and continue using features that do not require notifications."
+                        "usage_restricted" -> "Android blocks Usage Access for some sideloaded apps until the device user allows restricted settings. Golden Prince cannot switch this on. On the next screen, open the three-dot menu and choose Allow restricted settings. Android may ask you to confirm your device lock. Return to Golden Prince and tap One-Click Permission Setup again; then enable Golden Prince in Usage Access. If Android does not offer this option, do not bypass the device's security controls."
                         else -> "This optional Premium report reads app usage on this device. Android will open Usage Access settings so you can explicitly enable or decline it."
                     }
                     AlertDialog(
@@ -333,7 +333,7 @@ class MainActivity : ComponentActivity() {
                                                 )
                                             )
                                         } catch (_: Exception) {
-                                            notice = "Could not open App Info. Open Android Settings > Apps > PrinceCircle manually, then review the three-dot menu."
+                                            notice = "Could not open App Info. Open Android Settings > Apps > Golden Prince manually, then review the three-dot menu."
                                         }
                                     }
                                     "usage" -> if (premium) usageSettingsLauncher.launch(Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS))
@@ -347,7 +347,7 @@ class MainActivity : ComponentActivity() {
                 if (showDeleteDataDialog) {
                     AlertDialog(
                         onDismissRequest = { showDeleteDataDialog = false },
-                        title = { Text("Delete PrinceCircle account?") },
+                        title = { Text("Delete Golden Prince account?") },
                         text = { Text("This permanently deletes your account, device registrations, payment-review records and family membership. Any family you own will be transferred to a remaining member or deleted if empty. This cannot be undone. Direct UPI payments do not create recurring mandates.") },
                         confirmButton = {
                             TextButton(onClick = {
@@ -367,7 +367,7 @@ class MainActivity : ComponentActivity() {
                                             consentAccepted = false
                                             familyConsentEnabled = false
                                             showDeleteDataDialog = false
-                                            notice = "Your PrinceCircle account and associated server data were deleted."
+                                            notice = "Your Golden Prince account and associated server data were deleted."
                                         }
                                     } catch (e: Exception) {
                                         runOnUiThread { notice = e.message ?: "Account deletion failed. Please try again." }
@@ -381,7 +381,7 @@ class MainActivity : ComponentActivity() {
                 notice?.let { message ->
                     AlertDialog(
                         onDismissRequest = { notice = null },
-                        title = { Text("PrinceCircle") },
+                        title = { Text("Golden Prince") },
                         text = { Text(message) },
                         confirmButton = { TextButton(onClick = { notice = null }) { Text("OK") } }
                     )
@@ -418,7 +418,7 @@ class MainActivity : ComponentActivity() {
                     val commandId = command.optString("commandId")
                     val kind = command.optString("kind")
                     val payload = command.optJSONObject("payload") ?: JSONObject()
-                    val message = payload.optString("message", "PrinceCircle alert").take(180)
+                    val message = payload.optString("message", "Golden Prince alert").take(180)
                     when (kind) {
                         "alert", "ring" -> {
                             if (showRemoteSafetyNotification(commandId, kind, message)) {
@@ -442,7 +442,7 @@ class MainActivity : ComponentActivity() {
 
     private fun showRemoteSafetyNotification(commandId: String, kind: String, message: String): Boolean {
         val manager = getSystemService(Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
-        val channelId = "princecircle_remote_safety"
+        val channelId = "golden-prince_remote_safety"
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
             manager.getNotificationChannel(channelId) == null) {
             manager.createNotificationChannel(android.app.NotificationChannel(
@@ -456,7 +456,7 @@ class MainActivity : ComponentActivity() {
             this, commandId.hashCode(), launch,
             android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
         )
-        val title = if (kind == "ring") "PrinceCircle ring" else "PrinceCircle alert"
+        val title = if (kind == "ring") "Golden Prince ring" else "Golden Prince alert"
         if (Build.VERSION.SDK_INT >= 33 &&
             ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) return false
         val builder = android.app.Notification.Builder(this, channelId)
@@ -587,7 +587,7 @@ class MainActivity : ComponentActivity() {
                     if (manual) DeviceSummarySyncScheduler.syncNow(this)
                     else DeviceSummarySyncScheduler.schedule(this)
                 }
-                if (manual) notice = "Latest device consent refreshed from your PrinceCircle account."
+                if (manual) notice = "Latest device consent refreshed from your Golden Prince account."
             }
         } catch (e: Exception) {
             runOnUiThread {
@@ -635,7 +635,7 @@ class MainActivity : ComponentActivity() {
                 runOnUiThread {
                     profileName = profile.optString("name", "")
                     profilePhone = profile.optString("phone", "")
-                    profileMessage = "Profile saved to your PrinceCircle account."
+                    profileMessage = "Profile saved to your Golden Prince account."
                 }
             } catch (e: Exception) {
                 requireLoginAfterAuthFailure(e)
@@ -830,7 +830,7 @@ class MainActivity : ComponentActivity() {
 
     private fun startFamilyLocationSharing() {
         if (!familyConsentEnabled) {
-            notice = "Location sharing is not enabled by your family consent settings. Enable consent on the PrinceCircle website first."
+            notice = "Location sharing is not enabled by your family consent settings. Enable consent on the Golden Prince website first."
             return
         }
         if (!hasLocationPermission()) {
@@ -844,7 +844,7 @@ class MainActivity : ComponentActivity() {
         }
         if (familyId.isBlank()) { notice = "Sign in and create or join a family first."; return }
         if (BuildConfig.FAMILYGUARD_API_BASE_URL.isBlank()) {
-            notice = "PrinceCircle service URL is not configured. Please try again after the service is available."
+            notice = "Golden Prince service URL is not configured. Please try again after the service is available."
             return
         }
         runFamilyTask {
@@ -964,7 +964,7 @@ class MainActivity : ComponentActivity() {
             hasUsageAccess() -> "Granted"
             !premium -> "Premium only"
             Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && !restrictedHelpShown -> "Action needed: review Android Restricted Settings"
-            else -> "Pending: enable PrinceCircle in Usage Access settings"
+            else -> "Pending: enable Golden Prince in Usage Access settings"
         }
         usageAccessGranted = hasUsageAccess()
         permissionSetupComplete = hasLocationPermission() && hasNotificationPermission() && (!premium || hasUsageAccess())
@@ -1020,10 +1020,10 @@ class MainActivity : ComponentActivity() {
                 val apkUrl = versionData.optString("apkUrl", "")
                 runOnUiThread {
                     if (latestCode > currentCode && apkUrl.startsWith("https://")) {
-                        notice = "PrinceCircle update " + versionData.optString("versionName") + " is available. The official APK will open in your browser. Review Android's installer prompt before updating."
+                        notice = "Golden Prince update " + versionData.optString("versionName") + " is available. The official APK will open in your browser. Review Android's installer prompt before updating."
                         openWebPage(apkUrl)
                     } else {
-                        notice = "PrinceCircle is up to date. Current version: " + packageManager.getPackageInfo(packageName, 0).versionName + "."
+                        notice = "Golden Prince is up to date. Current version: " + packageManager.getPackageInfo(packageName, 0).versionName + "."
                     }
                 }
             } catch (e: Exception) {
@@ -1047,7 +1047,7 @@ class MainActivity : ComponentActivity() {
 
     private fun openUsageAccessSettings() {
         if (!premium) {
-            notice = "App Usage & Screen Time reports are a Premium feature. Subscribe through the official PrinceCircle website first."
+            notice = "App Usage & Screen Time reports are a Premium feature. Subscribe through the official Golden Prince website first."
             return
         }
         val restrictedHelpShown = getSharedPreferences("familyguard_permissions", Context.MODE_PRIVATE)
@@ -1069,7 +1069,7 @@ class MainActivity : ComponentActivity() {
             return
         }
         if (!hasUsageAccess()) {
-            usageText = "Usage Access is not enabled. Open Usage Access settings and explicitly allow PrinceCircle."
+            usageText = "Usage Access is not enabled. Open Usage Access settings and explicitly allow Golden Prince."
             return
         }
         try {
@@ -1139,19 +1139,19 @@ private fun ParentalConsentDisclosureScreen(
             modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
-            Text("PrinceCircle — Important privacy notice", style = MaterialTheme.typography.headlineMedium)
+            Text("Golden Prince — Important privacy notice", style = MaterialTheme.typography.headlineMedium)
             Text(
-                "A parent or legal guardian must review and accept this notice before PrinceCircle can request location permission or open Usage Access settings.",
+                "A parent or legal guardian must review and accept this notice before Golden Prince can request location permission or open Usage Access settings.",
                 style = MaterialTheme.typography.bodyLarge
             )
             Text("Location", style = MaterialTheme.typography.titleMedium)
-            Text("LOCATION SHARING: If you grant foreground location permission and then separately opt in and start a session, PrinceCircle collects latitude/longitude, accuracy, capture time and optional battery percentage and sends them over HTTPS to members of the family you joined. A persistent notification remains visible. Updates may be requested approximately every 60 seconds. Each session automatically stops after 10 minutes, revokes local sharing consent and requires you to press Start again. You can stop earlier or revoke permission at any time. ACCESS_BACKGROUND_LOCATION is not requested.")
+            Text("LOCATION SHARING: If you grant foreground location permission and then separately opt in and start a session, Golden Prince collects latitude/longitude, accuracy, capture time and optional battery percentage and sends them over HTTPS to members of the family you joined. A persistent notification remains visible. Updates may be requested approximately every 60 seconds. Each session automatically stops after 10 minutes, revokes local sharing consent and requires you to press Start again. You can stop earlier or revoke permission at any time. ACCESS_BACKGROUND_LOCATION is not requested.")
             Text("App usage", style = MaterialTheme.typography.titleMedium)
             Text("APP USAGE: The optional report requires Usage Access separately in Android Settings. The separate Installed Apps & Screen Time Sync switch uploads launchable app labels and today's total screen-time minutes only while ON.")
             Text("Calls and contacts summary", style = MaterialTheme.typography.titleMedium)
-            Text("CALLS & CONTACTS: A separate switch and Android runtime permission are required. While ON, PrinceCircle reads call dates and durations only to calculate today's total call count and total duration, and reads only the total contacts count. Phone numbers, call details, contact names and contact contents are never uploaded. Turning the switch OFF immediately stops future scheduled sync and clears the stored summary when the network is available.")
+            Text("CALLS & CONTACTS: A separate switch and Android runtime permission are required. While ON, Golden Prince reads call dates and durations only to calculate today's total call count and total duration, and reads only the total contacts count. Phone numbers, call details, contact names and contact contents are never uploaded. Turning the switch OFF immediately stops future scheduled sync and clears the stored summary when the network is available.")
             Text("Data, sharing and safety", style = MaterialTheme.typography.titleMedium)
-            Text("Location sharing is optional. When the device user explicitly enables it, the app sends location to the PrinceCircle server over HTTPS and shows an ongoing Android notification. The user can stop sharing and revoke consent at any time. Never use this app for covert monitoring.")
+            Text("Location sharing is optional. When the device user explicitly enables it, the app sends location to the Golden Prince server over HTTPS and shows an ongoing Android notification. The user can stop sharing and revoke consent at any time. Never use this app for covert monitoring.")
             Text("Parental consent", style = MaterialTheme.typography.titleMedium)
             Text("A parent or legal guardian should accept only after explaining the features to the device user and obtaining any consent required by local law. This on-device confirmation is not identity or age verification.")
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -1182,8 +1182,8 @@ private fun LoginScreen(
     Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
         Column(modifier = Modifier.fillMaxSize().padding(24.dp), verticalArrangement = Arrangement.Center) {
             Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        Image(painter = painterResource(R.drawable.princecircle_logo), contentDescription = "PrinceCircle crown logo", modifier = Modifier.size(56.dp), contentScale = ContentScale.Fit)
-                        Text("PrinceCircle", style = MaterialTheme.typography.headlineLarge)
+                        Image(painter = painterResource(R.drawable.golden-prince_logo), contentDescription = "Golden Prince crown logo", modifier = Modifier.size(56.dp), contentScale = ContentScale.Fit)
+                        Text("Golden Prince", style = MaterialTheme.typography.headlineLarge)
                     }
             Spacer(Modifier.height(8.dp))
             Text("Sign in with the account created on the official website.")
@@ -1196,7 +1196,7 @@ private fun LoginScreen(
             Button(onClick = { onLogin(email, password) }, enabled = email.isNotBlank() && password.isNotBlank(),
                 modifier = Modifier.fillMaxWidth()) { Text("LOGIN") }
             OutlinedButton(onClick = onOpenWebsite, modifier = Modifier.fillMaxWidth()) {
-                Text("Open PrinceCircle Website")
+                Text("Open Golden Prince Website")
             }
             if (message.isNotBlank()) Text(message, style = MaterialTheme.typography.bodySmall)
             Spacer(Modifier.height(12.dp))
@@ -1207,7 +1207,7 @@ private fun LoginScreen(
 }
 
 @Composable
-private fun PrinceCircleDashboard(
+private fun Golden PrinceDashboard(
     premium: Boolean,
     installedAppsSync: Boolean,
     callsContactsSync: Boolean,
@@ -1251,7 +1251,7 @@ private fun PrinceCircleDashboard(
                     modifier = Modifier.fillMaxWidth().padding(20.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    Text("PrinceCircle Menu", style = MaterialTheme.typography.titleLarge)
+                    Text("Golden Prince Menu", style = MaterialTheme.typography.titleLarge)
                     Text("Settings", style = MaterialTheme.typography.titleMedium)
                     OutlinedButton(
                         onClick = { scope.launch { drawerState.close(); onSetupPermissions() } },
@@ -1287,7 +1287,7 @@ private fun PrinceCircleDashboard(
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                    Text("PrinceCircle", style = MaterialTheme.typography.headlineLarge)
+                    Text("Golden Prince", style = MaterialTheme.typography.headlineLarge)
                     TextButton(onClick = { scope.launch { drawerState.open() } }) { Text("☰ Menu") }
                 }
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -1372,7 +1372,7 @@ private fun PrinceCircleDashboard(
                         }
                     }
                 }
-                Text("PrinceCircle location sharing is visible, consent-based and revocable. Account settings are available from the menu.", style = MaterialTheme.typography.bodySmall)
+                Text("Golden Prince location sharing is visible, consent-based and revocable. Account settings are available from the menu.", style = MaterialTheme.typography.bodySmall)
             }
         }
     }
