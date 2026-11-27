@@ -61,7 +61,6 @@ def test_live_familyguard_end_to_end():
     required_tabs = {
         "overview": "Overview",
         "profile": "Profile",
-        "family": "Family",
         "devices": "Devices",
         "payments": "Payments",
         "privacy": "Privacy",
@@ -103,8 +102,8 @@ def test_live_familyguard_end_to_end():
         profile = request("GET", "/account/profile", token=token, expected={200}).json()
         assert profile, "Authenticated profile response was empty"
 
-        # Dashboard tab data sources: Overview, Location History, SOS Alerts,
-        # SMS/Call Summary, Family Management and Premium/₹999 monthly plan.
+        # Dashboard data sources: Overview, Location History, consented device summaries,
+        # and Premium/₹999 monthly plan. Family APIs remain covered as backend compatibility.
         request("GET", "/account/profile", token=token, expected={200})
         request("GET", "/family/mine", token=token, expected={200})
         request("GET", "/devices", token=token, expected={200})
