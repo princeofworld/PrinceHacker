@@ -64,7 +64,7 @@
   if(!devices.length)root.append(el("p","No registered devices yet.","muted"));
   else if(query&&!visible)root.append(el("p","No installed apps match your search.","muted"));
  }
-  const actions={"overview":overview,"location-history":locations,"installed-apps":apps,"premium":async()=>{const b=await api("/billing/status");$("premium-state").textContent=b.plan==="premium"?"Premium active":(b.plan||b.status||"Free");$("premium-detail").textContent="Premium subscription: ₹999/month";}};
+  const actions={"overview":overview,"location-history":locations,"installed-apps":apps};
  async function load(name){try{if(actions[name])await actions[name]();}catch(e){const target={"overview":"fg-overview-account","location-history":"fg-location-content","installed-apps":"fg-app-content","premium":"premium-detail"}[name];if(target&&$(target))$(target).textContent="Could not load: "+e.message;}}
  document.addEventListener("click",event=>{const btn=event.target.closest("[data-tab]");if(!btn)return;const name=btn.dataset.tab;if(actions[name])load(name);},{capture:true});
  $("fg-refresh-locations")?.addEventListener("click",()=>load("location-history"));
