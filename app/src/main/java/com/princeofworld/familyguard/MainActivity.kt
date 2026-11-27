@@ -375,6 +375,14 @@ class MainActivity : ComponentActivity() {
      * commands create ordinary user-visible notifications. A lock command can only
      * show a local confirmation; accepting it activates a dismissible in-app screen.
      */
+    private fun startRemoteCommandPolling() {
+        commandPollHandler.removeCallbacks(commandPollRunnable)
+        if (signedIn) {
+            pollRemoteCommands()
+            commandPollHandler.postDelayed(commandPollRunnable, 15_000L)
+        }
+    }
+
     private fun pollRemoteCommands() {
         if (!signedIn) return
         verificationExecutor.execute {
@@ -464,11 +472,7 @@ class MainActivity : ComponentActivity() {
         locationSharingActive = getSharedPreferences("familyguard_family", Context.MODE_PRIVATE)
             .getString("locationSessionStatus", "stopped") == "active"
         if (signedIn) refreshDeviceConsent()
-        commandPollHandler.removeCallbacks(commandPollRunnable)
-        if (signedIn) {
-            pollRemoteCommands()
-            commandPollHandler.postDelayed(commandPollRunnable, 15_000L)
-        }
+        startRemoteCommandPolling()
         updatePermissionStatus()
     }
 
@@ -625,6 +629,7 @@ class MainActivity : ComponentActivity() {
                 FamilyGuardApi.saveSession(this, result)
                 runOnUiThread {
                     signedIn = true
+                    startRemoteCommandPolling()
                     loginMessage = "Signed in successfully."
                     refreshSubscriptionStatus()
                 }
