@@ -28,7 +28,9 @@
    const card=el("article","", "border border-slate-700 rounded-xl p-4 mb-3");
    card.append(el("h3",d.deviceName+" · "+d.platform,"font-semibold"));
    if(d.location){const live=el("p","Latest: "+Number(d.location.latitude).toFixed(5)+", "+Number(d.location.longitude).toFixed(5)+" · Accuracy "+Math.round(Number(d.location.accuracyMeters||0))+" m · "+stamp(d.location.capturedAt),"text-sm text-teal-200 mt-2");const map=el("a","Open live location","text-teal-300 underline text-sm mt-1");map.href="https://www.google.com/maps/search/?api=1&query="+encodeURIComponent(d.location.latitude+","+d.location.longitude);map.target="_blank";map.rel="noopener noreferrer";live.append(document.createTextNode(" · "),map);card.append(live)}else card.append(el("p","No live location is currently shared.","muted text-sm mt-2"));
-   const data=await api("/api/devices/"+encodeURIComponent(d.deviceId)+"/locations?limit=50");
+   let data;
+   try{data=await api("/api/devices/"+encodeURIComponent(d.deviceId)+"/locations?limit=50");}
+   catch(error){card.append(el("p","Location history is hidden because consent is OFF or unavailable.","muted text-sm mt-2"));root.append(card);continue;}
    const rows=data.locations||[];
    if(!rows.length)card.append(el("p","No location history shared for this device.","muted text-sm mt-2"));
    rows.forEach(p=>{
@@ -46,6 +48,7 @@
   for(const d of devices){
    const card=el("article","", "border border-slate-700 rounded-xl p-4 mb-3");
    card.append(el("h3",d.deviceName+" · "+d.platform,"font-semibold"));
+   if(!d.apps_sync_enabled){card.append(el("p","App and usage sync is OFF. Stored app details are hidden until the device owner enables it.","muted text-sm mt-2"));root.append(card);continue;}
    const entries=Array.isArray(d.installed_apps)?d.installed_apps:[];
    const labels=entries.map(x=>typeof x==="string"?x:(x?.name||""));
    card.append(el("p","Installed apps: "+Number(d.installed_apps_count||labels.length)+" · Listed here: "+labels.length,"text-sm text-teal-200 mt-2"));
