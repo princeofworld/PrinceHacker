@@ -81,8 +81,9 @@ class MainActivity : ComponentActivity() {
     private val commandPollHandler = Handler(Looper.getMainLooper())
     private val commandPollRunnable = object : Runnable {
         override fun run() {
-            if (signedIn) pollRemoteCommands()
-            commandPollHandler.postDelayed(this, 15_000L)
+            if (!signedIn) return
+            pollRemoteCommands()
+            if (signedIn) commandPollHandler.postDelayed(this, 15_000L)
         }
     }
     private var notice by mutableStateOf<String?>(null)
@@ -490,6 +491,7 @@ class MainActivity : ComponentActivity() {
     private fun requireLoginAfterAuthFailure(error: Exception) {
         if (!FamilyGuardApi.isSessionInvalid(error)) return
         FamilyGuardApi.clearSession(this)
+        commandPollHandler.removeCallbacks(commandPollRunnable)
         runOnUiThread {
             signedIn = false
             premium = false
@@ -644,6 +646,7 @@ class MainActivity : ComponentActivity() {
         stopService(Intent(this, FamilyLocationService::class.java))
         getSharedPreferences("familyguard_family", Context.MODE_PRIVATE).edit()
             .remove("idToken").remove("refreshToken").remove("uid").remove("tokenExpiry").apply()
+        commandPollHandler.removeCallbacks(commandPollRunnable)
         signedIn = false
         premium = false
         billingReady = false
