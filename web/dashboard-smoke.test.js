@@ -3,6 +3,10 @@ const fs = require("node:fs");
 const assert = require("node:assert/strict");
 
 const html = fs.readFileSync("web/dashboard.html", "utf8");
+const homepage = fs.readFileSync("web/index.html", "utf8");
+assert.match(homepage, /releases\/latest\/download\/Golden\.Prince-release-signed\.apk/, "Homepage APK download must match the published release asset");
+assert.doesNotMatch(homepage, /releases\/latest\/download\/Golden Prince-release-signed\.apk/, "Homepage must not use the old broken APK filename");
+assert.match(html, /releases\/latest\/download\/Golden\.Prince-release-signed\.apk/, "Dashboard APK download must match the published release asset");
 const requiredTabs = [
   "overview",
   "profile",
